@@ -1,0 +1,14 @@
+Single-threaded dispatch:
+- KIO can only dispatch in the main event loop's thread anyway
+- It's impossible to keep a node's lookup count otherwise:
+  https://github.com/python-llfuse/python-llfuse/blob/master/developer-notes/lookup_counts.rst
+- Integrates well with the Qt main loop
+- Avoids expensive and complicated locking
+
+Lowlevel API:
+- Asynchronous
+- Can access files without having to call readdir on all path elements
+  (necessary for HTTP, makes other slaves quicker)
+- Lets the FUSE daemon implement unlinking properly. With the high-level API,
+  calling unlink on a still opened file results in a rename(..., ".fuse_hiddenXXX") instead,
+  which is undesirable
