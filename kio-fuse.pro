@@ -33,4 +33,5 @@ HEADERS += \
     kiofusevfs.h
 
 DISTFILES += \
-    DESIGN
+    DESIGN \
+    TODO

@@ -42,10 +42,8 @@ private:
 	static void lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
 	static void forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);
 	static void getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-	static void opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                    struct fuse_file_info *fi);
-	static void releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 
 private:
 	KIOFuseNode *nodeForIno(const fuse_ino_t ino);

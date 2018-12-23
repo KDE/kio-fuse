@@ -9,9 +9,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.lookup = &KIOFuseVFS::lookup,
 	.forget = &KIOFuseVFS::forget,
 	.getattr = &KIOFuseVFS::getattr,
-	.opendir = &KIOFuseVFS::opendir,
 	.readdir = &KIOFuseVFS::readdir,
-	.releasedir = &KIOFuseVFS::releasedir,
 };
 
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
@@ -117,29 +115,6 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 	fuse_reply_attr(req, &node->m_stat, 1);
 }
 
-void KIOFuseVFS::opendir(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
-{
-	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
-	KIOFuseNode *node = that->nodeForIno(ino);
-	if(!node)
-	{
-		fuse_reply_err(req, EIO);
-		return;
-	}
-
-	if(node->type() > KIOFuseNode::NodeType::LastDirType)
-	{
-		fuse_reply_err(req, ENOTDIR);
-		return;
-	}
-
-	// TODO: This could be made more POSIX compliant by increasing the lookup count of
-	// children and storing a copy of childrenInos in fi.
-
-	node->m_lookupCount++;
-	fuse_reply_open(req, fi);
-}
-
 void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)
 {
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
@@ -179,26 +154,6 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		fuse_reply_buf(req, nullptr, 0);
 }
 
-void KIOFuseVFS::releasedir(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
-{
-	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
-	KIOFuseNode *node = that->nodeForIno(ino);
-	if(!node)
-	{
-		fuse_reply_err(req, EIO);
-		return;
-	}
-
-	if(node->type() > KIOFuseNode::NodeType::LastDirType)
-	{
-		fuse_reply_err(req, ENOTDIR);
-		return;
-	}
-
-	node->m_lookupCount--;
-	// No reply
-}
-
 void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
@@ -215,7 +170,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		return;
 	}
 
-	// Zero means invalid entry. Compared to a ENOENT reply the kernel can cache this.
+	// Zero means invalid entry. Compared to an ENOENT reply, the kernel can cache this.
 	struct fuse_entry_param entry {};
 
 	for(auto ino : static_cast<KIOFuseDirNode*>(node)->m_childrenInos)
