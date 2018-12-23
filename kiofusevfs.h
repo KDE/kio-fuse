@@ -51,7 +51,7 @@ private:
 	static const struct fuse_lowlevel_ops fuse_ll_ops;
 
 	struct fuse_session *m_fuseSession = nullptr;
-	QSocketNotifier *m_fuseNotifier = nullptr;
+	std::unique_ptr<QSocketNotifier> m_fuseNotifier;
 	std::unordered_map<fuse_ino_t, std::unique_ptr<KIOFuseNode>> m_nodes;
 };
 

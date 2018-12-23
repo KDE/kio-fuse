@@ -61,8 +61,15 @@ bool KIOFuseVFS::start(struct fuse_args &args, const char *mountpoint)
 		return false;
 	}
 
-	m_fuseNotifier = new QSocketNotifier(fuse_session_fd(m_fuseSession), QSocketNotifier::Read, this);
-	m_fuseNotifier->connect(m_fuseNotifier, &QSocketNotifier::activated, this, &KIOFuseVFS::fuseRequestPending);
+	// Setup a notifier on the FUSE FD
+	int fusefd = fuse_session_fd(m_fuseSession);
+
+	// Set the FD to O_NONBLOCK so that it can be read in a loop until empty
+	int flags = fcntl(fusefd, F_GETFL);
+	fcntl(fusefd, F_SETFL, flags | O_NONBLOCK);
+
+	m_fuseNotifier = std::make_unique<QSocketNotifier>(fusefd, QSocketNotifier::Read, this);
+	m_fuseNotifier->connect(m_fuseNotifier.get(), &QSocketNotifier::activated, this, &KIOFuseVFS::fuseRequestPending);
 
 	return true;
 }
@@ -76,12 +83,6 @@ void KIOFuseVFS::stop()
 		fuse_session_destroy(m_fuseSession);
 		m_fuseSession = nullptr;
 	}
-
-	if(m_fuseNotifier)
-	{
-		delete m_fuseNotifier;
-		m_fuseNotifier = nullptr;
-	}
 }
 
 #include <QCoreApplication>
@@ -89,16 +90,26 @@ void KIOFuseVFS::fuseRequestPending()
 {
 	struct fuse_buf fbuf = {};
 
-	int res = fuse_session_receive_buf(m_fuseSession, &fbuf);
+	// Read requests until empty (-EAGAIN) or error
+	for(;;)
+	{
+		int res = fuse_session_receive_buf(m_fuseSession, &fbuf);
 
-	if (res == -EINTR)
-		return;
+		if (res == -EINTR || res == -EAGAIN)
+			break;
 
-	// TODO: Handle correctly
-	if (res <= 0)
-		QCoreApplication::exit(1);
+		if (res <= 0)
+		{
+			if(res < 0)
+				qWarning() << "Error reading FUSE request:" << strerror(errno);
 
-	fuse_session_process_buf(m_fuseSession, &fbuf);
+			// TODO: Handle correctly
+			QCoreApplication::exit(1);
+			break;
+		}
+
+		fuse_session_process_buf(m_fuseSession, &fbuf);
+	}
 }
 
 void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
