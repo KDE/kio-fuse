@@ -29,5 +29,7 @@ int main(int argc, char *argv[])
 	if(!kiofusevfs.start(args, opts.mountpoint))
 		return 1;
 
+	fuse_opt_free_args(&args);
+
 	return a.exec();
 }

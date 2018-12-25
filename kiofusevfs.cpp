@@ -9,6 +9,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.lookup = &KIOFuseVFS::lookup,
 	.forget = &KIOFuseVFS::forget,
 	.getattr = &KIOFuseVFS::getattr,
+	.write = &KIOFuseVFS::write,
 	.readdir = &KIOFuseVFS::readdir,
 };
 
@@ -88,7 +89,8 @@ void KIOFuseVFS::stop()
 #include <QCoreApplication>
 void KIOFuseVFS::fuseRequestPending()
 {
-	struct fuse_buf fbuf = {};
+	// Never deallocated, just reused
+	static struct fuse_buf fbuf = {};
 
 	// Read requests until empty (-EAGAIN) or error
 	for(;;)
@@ -165,6 +167,48 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		fuse_reply_buf(req, nullptr, 0);
 }
 
+void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, fuse_file_info *fi)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	if(node->type() <= KIOFuseNode::NodeType::LastDirType)
+	{
+		fuse_reply_err(req, EISDIR);
+		return;
+	}
+
+	switch(node->type())
+	{
+	default:
+		fuse_reply_err(req, EIO);
+		return;
+
+	case KIOFuseNode::NodeType::ControlNode:
+	{
+		if(off != 0)
+		{
+			fuse_reply_err(req, EINVAL);
+			return;
+		}
+
+		QString command = QString::fromUtf8(buf, size);
+		that->handleControlCommand(command, [=] (int ret) {
+			if(ret)
+				fuse_reply_err(req, ret);
+			else
+				fuse_reply_write(req, size);
+		});
+		return;
+	}
+	}
+}
+
 void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
@@ -225,4 +269,30 @@ KIOFuseNode *KIOFuseVFS::nodeForIno(const fuse_ino_t ino)
 		return nullptr;
 
 	return it->second.get();
+}
+#include <QTimer>
+void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> callback)
+{
+	int opEnd = cmd.indexOf(QChar(' '));
+	if(opEnd < 0)
+		return callback(EINVAL);
+
+	QStringRef op = cmd.midRef(0, opEnd);
+	// Command "MOUNT <url>"
+	if(op == QStringLiteral("MOUNT"))
+	{
+		QUrl url = QUrl{cmd.midRef(opEnd + 1).trimmed().toString()};
+		if(!url.isValid())
+			return callback(EINVAL);
+
+		QTimer::singleShot(0, [=] {
+			qDebug() << "Yay" << url;
+			callback(0);
+		});
+	}
+	else
+	{
+		qWarning() << "Unknown control operation" << op;
+		return callback(EINVAL);
+	}
 }

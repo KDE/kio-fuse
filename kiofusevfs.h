@@ -3,6 +3,7 @@
 
 #include <fuse_lowlevel.h>
 
+#include <functional>
 #include <memory>
 #include <unordered_map>
 
@@ -44,9 +45,12 @@ private:
 	static void getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                    struct fuse_file_info *fi);
+	static void write(fuse_req_t req, fuse_ino_t ino, const char *buf,
+	                  size_t size, off_t off, struct fuse_file_info *fi);
 
 private:
 	KIOFuseNode *nodeForIno(const fuse_ino_t ino);
+	void handleControlCommand(QString cmd, std::function<void(int)> callback);
 
 	static const struct fuse_lowlevel_ops fuse_ll_ops;
 
