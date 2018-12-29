@@ -10,9 +10,11 @@
 
 class KIOFuseNode {
 public:
-	KIOFuseNode(const fuse_ino_t parentIno, QString nodeName) :
+	// Creates a new node. Make sure to set the node's m_stat.st_ino once inserted.
+	KIOFuseNode(const fuse_ino_t parentIno, QString nodeName, const struct stat &stat) :
 	    m_parentIno(parentIno),
-	    m_nodeName(nodeName)
+	    m_nodeName(nodeName),
+	    m_stat(stat)
 	{}
 
 	virtual ~KIOFuseNode() {}
@@ -36,11 +38,29 @@ public:
 	// this is "for free" - the vtable ptr is enough
 	virtual NodeType type() const = 0;
 
+	// Typesafe cast based on type
+	template<class T> T *as()
+	{
+		if(type() == T::Type)
+			return static_cast<T*>(this);
+
+		return nullptr;
+	}
+
+	// Typesafe cast based on type
+	template<class T> const T *as() const
+	{
+		if(type() == T::Type)
+			return static_cast<const T*>(this);
+
+		return nullptr;
+	}
+
 	uint64_t m_lookupCount = 0;
 	fuse_ino_t m_parentIno;
+	QString m_nodeName;
 	// TODO: nlink of directories (./..)?
 	struct stat m_stat;
-	QString m_nodeName;
 };
 
 class KIOFuseDirNode : public KIOFuseNode {
@@ -49,35 +69,44 @@ public:
 	std::vector<fuse_ino_t> m_childrenInos;
 };
 
+template<> KIOFuseDirNode *KIOFuseNode::as();
+template<> const KIOFuseDirNode *KIOFuseNode::as() const;
+
 class KIOFuseRootNode : public KIOFuseDirNode {
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
-	NodeType type() const override { return NodeType::RootNode; }
+	static const NodeType Type = NodeType::RootNode;
+	NodeType type() const override { return Type; }
 };
 
 class KIOFuseDeletedRootNode : public KIOFuseDirNode {
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
-	NodeType type() const override { return NodeType::DeletedRootNode; }
+	static const NodeType Type = NodeType::DeletedRootNode;
+	NodeType type() const override { return Type; }
 };
 
 class KIOFuseProtocolNode : public KIOFuseDirNode {
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
-	NodeType type() const override { return NodeType::ProtocolNode; }
+	static const NodeType Type = NodeType::ProtocolNode;
+	NodeType type() const override { return Type; }
 };
 
 class KIOFuseOriginNode : public KIOFuseDirNode {
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
-	NodeType type() const override { return NodeType::OriginNode; }
+	static const NodeType Type = NodeType::OriginNode;
+	NodeType type() const override { return Type; }
 	QUrl m_baseUrl;
 };
 
-class KIOFuseRemoteDirNode : public QObject, KIOFuseDirNode {
+class KIOFuseRemoteDirNode : public QObject, public KIOFuseDirNode {
 	Q_OBJECT
 public:
-	NodeType type() const override { return NodeType::RemoteDirNode; }
+	using KIOFuseDirNode::KIOFuseDirNode;
+	static const NodeType Type = NodeType::RemoteDirNode;
+	NodeType type() const override { return Type; }
 
 	bool m_childrenComplete = false, m_childrenRequested = false;
 
@@ -88,13 +117,16 @@ signals:
 class KIOFuseControlNode : public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
-	NodeType type() const override { return NodeType::ControlNode; }
+	static const NodeType Type = NodeType::ControlNode;
+	NodeType type() const override { return Type; }
 };
 
-class KIOFuseRemoteFileNode : public QObject, KIOFuseNode {
+class KIOFuseRemoteFileNode : public QObject, public KIOFuseNode {
 	Q_OBJECT
 public:
-	NodeType type() const override { return NodeType::RemoteFileNode; }
+	using KIOFuseNode::KIOFuseNode;
+	static const NodeType Type = NodeType::RemoteFileNode;
+	NodeType type() const override { return Type; }
 	// Cache information
 	int m_localCacheFD = -1;
 	bool m_cacheValid = false, m_cacheRequested = false, m_cacheDirty = false;
@@ -103,10 +135,12 @@ signals:
 	void localCacheChanged(size_t size);
 };
 
-class KIOFuseSymLinkNode : public QObject, KIOFuseNode {
+class KIOFuseSymLinkNode : public QObject, public KIOFuseNode {
 	Q_OBJECT
 public:
-	NodeType type() const override { return NodeType::RemoteSymlinkNode; }
+	using KIOFuseNode::KIOFuseNode;
+	static const NodeType Type = NodeType::RemoteSymlinkNode;
+	NodeType type() const override { return Type; }
 	QString m_target;
 
 signals:
