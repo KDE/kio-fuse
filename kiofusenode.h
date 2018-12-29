@@ -110,7 +110,7 @@ public:
 
 	bool m_childrenComplete = false, m_childrenRequested = false;
 
-signals:
+Q_SIGNALS:
 	void gotChildren(bool success);
 };
 
@@ -131,7 +131,7 @@ public:
 	int m_localCacheFD = -1;
 	bool m_cacheValid = false, m_cacheRequested = false, m_cacheDirty = false;
 
-signals:
+Q_SIGNALS:
 	void localCacheChanged(size_t size);
 };
 
@@ -143,6 +143,6 @@ public:
 	NodeType type() const override { return Type; }
 	QString m_target;
 
-signals:
+Q_SIGNALS:
 	void gotSymlinkTarget(QString &target);
 };

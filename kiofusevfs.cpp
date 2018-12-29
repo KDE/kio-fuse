@@ -161,8 +161,8 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		QByteArray childName = child->m_nodeName.toUtf8();
 
 		size_t oldsize = dirbuf.size();
-		dirbuf.resize(oldsize + fuse_add_direntry(req, nullptr, 0, childName, nullptr, 0));
-		fuse_add_direntry(req, dirbuf.data() + oldsize, dirbuf.size() + oldsize, childName, &child->m_stat, dirbuf.size());
+		dirbuf.resize(oldsize + fuse_add_direntry(req, nullptr, 0, childName.data(), nullptr, 0));
+		fuse_add_direntry(req, dirbuf.data() + oldsize, dirbuf.size() + oldsize, childName.data(), &child->m_stat, dirbuf.size());
 	}
 
 	if(off < dirbuf.size())
@@ -359,7 +359,7 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 
 void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> callback)
 {
-	int opEnd = cmd.indexOf(QChar(' '));
+	int opEnd = cmd.indexOf(QLatin1Char(' '));
 	if(opEnd < 0)
 		return callback(EINVAL);
 
@@ -433,7 +433,7 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 
 			// Create all path components as directories
 			KIOFuseNode *pathNode = originNode;
-			auto pathElements = url.path().split(QChar('/'));
+			auto pathElements = url.path().split(QLatin1Char('/'));
 
 			// Strip empty path elements, for instance in
 			// "file:///home/foo"

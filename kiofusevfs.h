@@ -39,7 +39,7 @@ public:
 	bool start(fuse_args &args, const char *mountpoint);
 	void stop();
 
-public slots:
+public Q_SLOTS:
 	void fuseRequestPending();
 
 private:
