@@ -30,7 +30,10 @@ void FileOpsTest::initTestCase()
 
 	kiofuseProcess.start();
 
+	// kio-fuse without "-f" daemonizes only after mounting succeeded
 	QVERIFY(kiofuseProcess.waitForFinished());
+	QVERIFY(kiofuseProcess.exitStatus() == QProcess::NormalExit);
+	QVERIFY(kiofuseProcess.exitCode() == 0);
 
 	m_controlFile.setFileName(m_mountDir.filePath(QStringLiteral("_control")));
 
@@ -65,12 +68,14 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(localFile.open());
 
 	QCOMPARE(localFile.write("teststring"), 10);
+	QVERIFY(localFile.flush());
 
 	QString cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName());
 	QCOMPARE(m_controlFile.write(cmd.toUtf8()), cmd.length());
 
 	QFile mirroredFile(QStringLiteral("%1/file/%2").arg(m_mountDir.path()).arg(localFile.fileName()));
 	QVERIFY(mirroredFile.exists());
+	QCOMPARE(mirroredFile.size(), localFile.size());
 }
 
 QTEST_GUILESS_MAIN(FileOpsTest)
