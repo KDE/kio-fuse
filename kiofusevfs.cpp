@@ -195,12 +195,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 
 	case KIOFuseNode::NodeType::ControlNode:
 	{
-		if(off != 0)
-		{
-			fuse_reply_err(req, EINVAL);
-			return;
-		}
-
+		// Intentionally ignoring the offset here
 		QString command = QString::fromUtf8(buf, size);
 		that->handleControlCommand(command, [=] (int ret) {
 			if(ret)

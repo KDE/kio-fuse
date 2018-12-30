@@ -73,6 +73,9 @@ void FileOpsTest::testLocalFileOps()
 	QString cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName());
 	QCOMPARE(m_controlFile.write(cmd.toUtf8()), cmd.length());
 
+	// Doing the same again should work just fine
+	QCOMPARE(m_controlFile.write(cmd.toUtf8()), cmd.length());
+
 	QFile mirroredFile(QStringLiteral("%1/file/%2").arg(m_mountDir.path()).arg(localFile.fileName()));
 	QVERIFY(mirroredFile.exists());
 	QCOMPARE(mirroredFile.size(), localFile.size());
