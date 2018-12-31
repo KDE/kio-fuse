@@ -14,6 +14,7 @@ private Q_SLOTS:
 
 	void testControlFile();
 	void testLocalFileOps();
+	void testArchiveOps();
 
 private:
 	QFile m_controlFile;
@@ -58,8 +59,8 @@ void FileOpsTest::testControlFile()
 	QVERIFY(m_controlFile.exists());
 	QVERIFY(m_controlFile.isWritable());
 
-	QString cmd = QStringLiteral("MOUNT invalid URL");
-	QCOMPARE(m_controlFile.write(cmd.toUtf8()), -1);
+	QByteArray cmd = QStringLiteral("MOUNT invalid URL").toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), -1);
 }
 
 void FileOpsTest::testLocalFileOps()
@@ -70,11 +71,11 @@ void FileOpsTest::testLocalFileOps()
 	QCOMPARE(localFile.write("teststring"), 10);
 	QVERIFY(localFile.flush());
 
-	QString cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName());
-	QCOMPARE(m_controlFile.write(cmd.toUtf8()), cmd.length());
+	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
 	// Doing the same again should work just fine
-	QCOMPARE(m_controlFile.write(cmd.toUtf8()), cmd.length());
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
 	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path()).arg(localFile.fileName()));
 	QVERIFY(mirroredFile.exists());
@@ -94,6 +95,40 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(localFile.seek(1));
 	QVERIFY(mirroredFile.seek(1));
 	QCOMPARE(localFile.readAll(), mirroredFile.readAll());
+}
+
+void FileOpsTest::testArchiveOps()
+{
+	QString outerpath = QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz"));
+
+	// Mount a file inside the archive
+	QByteArray cmd = QStringLiteral("MOUNT tar://%1/outerarchive/outerfile").arg(outerpath).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	// And verify its content
+	QString outerfilepath = QStringLiteral("%1/tar%2/outerarchive/outerfile").arg(m_mountDir.path()).arg(outerpath);
+	QFile outerfile(outerfilepath);
+	QVERIFY(outerfile.open(QIODevice::ReadOnly));
+	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
+
+	// Next, mount an archive inside - this uses kio-fuse recursively
+	cmd = QStringLiteral("MOUNT tar://%1/outerarchive/innerarchive.tar.gz").arg(outerpath).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QString innerpath = QStringLiteral("%1/tar%2/outerarchive/innerarchive.tar.gz").arg(m_mountDir.path()).arg(outerpath);
+
+	// Unfortunately kio_archive is not reentrant, so a direct access would deadlock.
+	// As a workaround, cache the file to avoid a 2nd call into kio_archive.
+	QFile innerarchiveFile(innerpath);
+	QVERIFY(innerarchiveFile.open(QIODevice::ReadOnly));
+	QVERIFY(!innerarchiveFile.readAll().isEmpty());
+
+	cmd = QStringLiteral("MOUNT tar://%1/innerarchive/innerfile").arg(innerpath).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path()).arg(innerpath));
+	QVERIFY(innerfile.open(QIODevice::ReadOnly));
+	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
 }
 
 QTEST_GUILESS_MAIN(FileOpsTest)

@@ -431,12 +431,12 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	}
 	else if(entry.isDir())
 	{
-		attr.st_mode |= S_IFDIR;
+		attr.st_mode = S_IFDIR | 0755;
 		return new KIOFuseRemoteDirNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
 	}
 	else // it's a regular file
 	{
-		attr.st_mode |= S_IFREG;
+		attr.st_mode = S_IFREG | 0755;
 		return new KIOFuseRemoteFileNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
 	}
 }
@@ -609,19 +609,16 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 				pathNode = subdirNode;
 			}
 
-			if(pathElements.last() != statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME))
-			{
-				qWarning() << "Node at" << url.path() << "has different name than expected";
-				callback(EINVAL);
-				return;
-			}
-
 			// Finally create the last component
 			KIOFuseNode *finalNode = nodeByName(pathNode, pathElements.last());
 			if(!finalNode)
 			{
 				finalNode = createNodeFromUDSEntry(statJob->statResult(), pathNode->m_stat.st_ino);
 				finalNode->m_stat.st_ino = insertNode(finalNode);
+
+				// The remote name (statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME)) has to be
+				// ignored as it can be different from the path. e.g. tar:/foo.tar/ is "/"
+				finalNode->m_nodeName = pathElements.last();
 			}
 
 			callback(0);
