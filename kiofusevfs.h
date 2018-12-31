@@ -49,6 +49,8 @@ private:
 	static void getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                    struct fuse_file_info *fi);
+	static void read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+	                 struct fuse_file_info *fi);
 	static void write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 	                  size_t size, off_t off, struct fuse_file_info *fi);
 
@@ -63,8 +65,11 @@ private:
 	void fillStatForFile(struct stat &attr);
 	// Creates a new node on the heap with the matching type and fills m_stat fields.
 	KIOFuseNode* createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno);
-
-	void handleControlCommand(QString cmd, std::function<void(int)> callback);
+	// Invokes callback on error or when the bytes are available for reading/writing.
+	// If the file is not as big, it sets error = ESPIPE.
+	void waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t bytes, std::function<void(int error)> callback);
+	// Handle the _control command in cmd asynchronously and call callback upon completion
+	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
 
 	static const struct fuse_lowlevel_ops fuse_ll_ops;
 

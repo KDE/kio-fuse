@@ -76,9 +76,24 @@ void FileOpsTest::testLocalFileOps()
 	// Doing the same again should work just fine
 	QCOMPARE(m_controlFile.write(cmd.toUtf8()), cmd.length());
 
-	QFile mirroredFile(QStringLiteral("%1/file/%2").arg(m_mountDir.path()).arg(localFile.fileName()));
+	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path()).arg(localFile.fileName()));
 	QVERIFY(mirroredFile.exists());
+	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 	QCOMPARE(mirroredFile.size(), localFile.size());
+
+	// Compare the content
+	QVERIFY(localFile.seek(0));
+	QCOMPARE(localFile.readAll(), mirroredFile.readAll());
+
+	// Try again
+	QVERIFY(localFile.seek(0));
+	QVERIFY(mirroredFile.seek(0));
+	QCOMPARE(localFile.readAll(), mirroredFile.readAll());
+
+	// Again, but at an offset
+	QVERIFY(localFile.seek(1));
+	QVERIFY(mirroredFile.seek(1));
+	QCOMPARE(localFile.readAll(), mirroredFile.readAll());
 }
 
 QTEST_GUILESS_MAIN(FileOpsTest)

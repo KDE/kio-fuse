@@ -2,6 +2,7 @@
 
 #include <fuse_lowlevel.h>
 
+#include <functional>
 #include <vector>
 
 #include <QObject>
@@ -55,6 +56,12 @@ public:
 
 		return nullptr;
 	}
+
+	// Returns the path upwards until a root node.
+	QString virtualPath(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
+	// Returns the url upwards until a OriginNode is hit.
+	// If no OriginNode is found, an empty QUrl is returned
+	QUrl remoteUrl(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
 
 	uint64_t m_lookupCount = 0;
 	fuse_ino_t m_parentIno;
@@ -125,14 +132,19 @@ class KIOFuseRemoteFileNode : public QObject, public KIOFuseNode {
 	Q_OBJECT
 public:
 	using KIOFuseNode::KIOFuseNode;
+	~KIOFuseRemoteFileNode() {
+		if(m_localCache)
+			fclose(m_localCache);
+	}
 	static const NodeType Type = NodeType::RemoteFileNode;
 	NodeType type() const override { return Type; }
 	// Cache information
-	int m_localCacheFD = -1;
-	bool m_cacheValid = false, m_cacheRequested = false, m_cacheDirty = false;
+	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
+	size_t m_cacheSize = 0;
+	bool m_cacheComplete = false, m_cacheDirty = false;
 
 Q_SIGNALS:
-	void localCacheChanged(size_t size);
+	void localCacheChanged(int error);
 };
 
 class KIOFuseSymLinkNode : public QObject, public KIOFuseNode {

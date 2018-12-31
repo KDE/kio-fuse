@@ -4,6 +4,7 @@
 #include <QDebug>
 
 #include <KIO/StatJob>
+#include <KIO/TransferJob>
 
 #include "kiofusevfs.h"
 
@@ -11,9 +12,44 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.lookup = &KIOFuseVFS::lookup,
 	.forget = &KIOFuseVFS::forget,
 	.getattr = &KIOFuseVFS::getattr,
+	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
 	.readdir = &KIOFuseVFS::readdir,
 };
+
+/* Handles partial writes.
+ * Returns true only if count bytes were written successfully. */
+static bool sane_fwrite(const char *buf, size_t count, FILE *fd)
+{
+	while(count)
+	{
+		size_t step = fwrite(buf, 1, count, fd);
+		if(step == 0)
+			return false;
+
+		count -= step;
+		buf += step;
+	}
+
+	return true;
+}
+
+/* Handles partial reads.
+ * Returns true only if count bytes were read successfully. */
+static bool sane_fread(char *buf, size_t count, FILE *fd)
+{
+	while(count)
+	{
+		size_t step = fread(buf, 1, count, fd);
+		if(step == 0)
+			return false;
+
+		count -= step;
+		buf += step;
+	}
+
+	return true;
+}
 
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
     : QObject(parent)
@@ -90,7 +126,6 @@ void KIOFuseVFS::stop()
 	}
 }
 
-#include <QCoreApplication>
 void KIOFuseVFS::fuseRequestPending()
 {
 	// Never deallocated, just reused
@@ -169,6 +204,60 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		fuse_reply_buf(req, dirbuf.data() + off, std::min(size, dirbuf.size() - off));
 	else
 		fuse_reply_buf(req, nullptr, 0);
+}
+
+void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	if(node->type() <= KIOFuseNode::NodeType::LastDirType)
+	{
+		fuse_reply_err(req, EISDIR);
+		return;
+	}
+
+	switch(node->type())
+	{
+	default:
+		fuse_reply_err(req, EIO);
+		return;
+	case KIOFuseNode::NodeType::RemoteFileNode:
+	{
+		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		that->waitUntilBytesAvailable(remoteNode, off + size, [=](int error) {
+			if(error != 0 && error != ESPIPE)
+			{
+				fuse_reply_err(req, error);
+				return;
+			}
+
+			auto actualSize = size;
+
+			if(error == ESPIPE)
+			{
+				// Reading over the end
+				if(off >= remoteNode->m_cacheSize)
+					actualSize = 0;
+				else
+					actualSize = std::min(remoteNode->m_cacheSize - off, size);
+			}
+
+			// Construct a buf pointing to the cache file
+			fuse_bufvec buf = FUSE_BUFVEC_INIT(size);
+			buf.buf[0].fd = fileno(remoteNode->m_localCache);
+			buf.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
+			buf.buf[0].pos = off;
+
+			fuse_reply_data(req, &buf, fuse_buf_copy_flags{});
+		});
+	}
+	}
 }
 
 void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, fuse_file_info *fi)
@@ -350,6 +439,72 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 		attr.st_mode |= S_IFREG;
 		return new KIOFuseRemoteFileNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
 	}
+}
+
+void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t bytes, std::function<void(int error)> callback)
+{
+	if(node->m_cacheSize >= bytes)
+		return callback(0); // Already available
+	else if(node->m_cacheComplete)
+		return callback(ESPIPE); // File shorter than bytes
+
+	if(!node->m_localCache)
+	{
+		// Create a temporary file
+		node->m_localCache = tmpfile();
+
+		if(!node->m_localCache)
+			return callback(errno);
+
+		// Request the file
+		auto url = node->remoteUrl([this](auto ino) { return nodeForIno(ino); });
+		auto *job = KIO::get(url);
+		connect(job, &KIO::TransferJob::data, [=](auto *job, const QByteArray &data) {
+			Q_UNUSED(job);
+
+			if(fseek(node->m_localCache, 0, SEEK_END) == -1
+			   || !sane_fwrite(data.data(), data.size(), node->m_localCache))
+				emit node->localCacheChanged(errno);
+			else
+			{
+				node->m_cacheSize += data.size();
+				emit node->localCacheChanged(0);
+			}
+		});
+		connect(job, &KIO::TransferJob::result, [=] {
+			if(job->error())
+				emit node->localCacheChanged(EIO);
+			else
+			{
+				node->m_cacheComplete = true;
+				emit node->localCacheChanged(0);
+			}
+		});
+	}
+
+	// Using a unique_ptr here to let the lambda disconnect the connection itself
+	auto connection = std::make_unique<QMetaObject::Connection>();
+	auto &conn = *connection;
+	conn = connect(node, &KIOFuseRemoteFileNode::localCacheChanged,
+	               [=, connection = std::move(connection)](int error) {
+		if(error)
+		{
+			callback(error);
+			node->disconnect(*connection);
+		}
+
+		if(node->m_cacheSize >= bytes)
+		{
+			callback(0);
+			node->disconnect(*connection);
+		}
+		else if(node->m_cacheComplete)
+		{
+			callback(ESPIPE);
+			node->disconnect(*connection);
+		}
+	}
+	);
 }
 
 void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> callback)
