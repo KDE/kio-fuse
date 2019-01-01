@@ -468,11 +468,12 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	struct stat attr = {};
 	fillStatForFile(attr);
 	attr.st_size = entry.numberValue(KIO::UDSEntry::UDS_SIZE, 1);
+	attr.st_mode = entry.numberValue(KIO::UDSEntry::UDS_ACCESS, entry.isDir() ? 0755 : 0644);
 
 	// Check for link first as isDir can also be a link
 	if(entry.isLink())
 	{
-		attr.st_mode = S_IFLNK | 0755;
+		attr.st_mode |= S_IFLNK;
 		auto *ret = new KIOFuseSymLinkNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
 		ret->m_target = entry.stringValue(KIO::UDSEntry::UDS_LINK_DEST);
 		attr.st_size = ret->m_target.size();
@@ -480,12 +481,12 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	}
 	else if(entry.isDir())
 	{
-		attr.st_mode = S_IFDIR | 0755;
+		attr.st_mode |= S_IFDIR;
 		return new KIOFuseRemoteDirNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
 	}
 	else // it's a regular file
 	{
-		attr.st_mode = S_IFREG | 0755;
+		attr.st_mode |= S_IFREG;
 		return new KIOFuseRemoteFileNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
 	}
 }
