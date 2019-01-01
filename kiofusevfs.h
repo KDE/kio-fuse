@@ -68,6 +68,8 @@ private:
 	// Invokes callback on error or when the bytes are available for reading/writing.
 	// If the file is not as big, it sets error = ESPIPE.
 	void waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t bytes, std::function<void(int error)> callback);
+	// Invokes callback on error or when all children nodes are available
+	void waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<void(int error)> callback);
 	// Handle the _control command in cmd asynchronously and call callback upon completion
 	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
 

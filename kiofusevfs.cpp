@@ -3,6 +3,7 @@
 
 #include <QDebug>
 
+#include <KIO/ListJob>
 #include <KIO/StatJob>
 #include <KIO/TransferJob>
 
@@ -190,31 +191,39 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		return;
 	}
 
-	std::vector<char> dirbuf;
-	appendDirentry(dirbuf, req, ".", &node->m_stat);
-
-	KIOFuseNode *parentNode = that->nodeForIno(node->m_parentIno);
-	if(!parentNode)
-		parentNode = that->nodeForIno(KIOFuseIno::Root);
-	if(parentNode)
-		appendDirentry(dirbuf, req, "..", &parentNode->m_stat);
-
-	for(auto ino : node->as<KIOFuseDirNode>()->m_childrenInos)
-	{
-		KIOFuseNode *child = that->m_nodes[ino].get();
-		if(!child)
+	that->waitUntilChildrenComplete(node->as<KIOFuseDirNode>(), [=](int error){
+		if(error)
 		{
-			qWarning() << "Node" << node->m_nodeName << "references nonexistant child";
-			continue;
+			fuse_reply_err(req, error);
+			return;
 		}
 
-		appendDirentry(dirbuf, req, qPrintable(child->m_nodeName), &child->m_stat);
-	}
+		std::vector<char> dirbuf;
+		appendDirentry(dirbuf, req, ".", &node->m_stat);
 
-	if(off < dirbuf.size())
-		fuse_reply_buf(req, dirbuf.data() + off, std::min(size, dirbuf.size() - off));
-	else
-		fuse_reply_buf(req, nullptr, 0);
+		KIOFuseNode *parentNode = that->nodeForIno(node->m_parentIno);
+		if(!parentNode)
+			parentNode = that->nodeForIno(KIOFuseIno::Root);
+		if(parentNode)
+			appendDirentry(dirbuf, req, "..", &parentNode->m_stat);
+
+		for(auto ino : node->as<KIOFuseDirNode>()->m_childrenInos)
+		{
+			KIOFuseNode *child = that->m_nodes[ino].get();
+			if(!child)
+			{
+				qWarning() << "Node" << node->m_nodeName << "references nonexistant child";
+				continue;
+			}
+
+			appendDirentry(dirbuf, req, qPrintable(child->m_nodeName), &child->m_stat);
+		}
+
+		if(off < dirbuf.size())
+			fuse_reply_buf(req, dirbuf.data() + off, std::min(size, dirbuf.size() - off));
+		else
+			fuse_reply_buf(req, nullptr, 0);
+	});
 }
 
 void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)
@@ -346,20 +355,45 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		return;
 	}
 
-	// Zero means invalid entry. Compared to an ENOENT reply, the kernel can cache this.
-	struct fuse_entry_param entry {};
-
 	if(auto child = that->nodeByName(parentNode, QString::fromUtf8(name)))
 	{
 		// Found
 		child->m_lookupCount++;
+
+		struct fuse_entry_param entry {};
 		entry.ino = child->m_stat.st_ino;
 		entry.attr_timeout = 1.0;
 		entry.entry_timeout = 1.0;
 		entry.attr = child->m_stat;
+
+		fuse_reply_entry(req, &entry);
+		return;
 	}
 
-	fuse_reply_entry(req, &entry);
+	// Not found - try again
+	that->waitUntilChildrenComplete(parentNode->as<KIOFuseDirNode>(), [=](int error) {
+		if(error)
+		{
+			fuse_reply_err(req, error);
+			return;
+		}
+
+		// Zero means invalid entry. Compared to an ENOENT reply, the kernel can cache this.
+		struct fuse_entry_param entry {};
+
+		if(auto child = that->nodeByName(parentNode, QString::fromUtf8(name)))
+		{
+			// Found
+			child->m_lookupCount++;
+
+			entry.ino = child->m_stat.st_ino;
+			entry.attr_timeout = 1.0;
+			entry.entry_timeout = 1.0;
+			entry.attr = child->m_stat;
+		}
+
+		fuse_reply_entry(req, &entry);
+	});
 }
 
 void KIOFuseVFS::forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
@@ -522,6 +556,66 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 	);
 }
 
+void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<void (int)> callback)
+{
+	KIOFuseRemoteDirNode *remoteNode = node->as<KIOFuseRemoteDirNode>();
+	if(!remoteNode)
+		return callback(0); // Not a remote node
+
+	if(remoteNode->m_childrenComplete)
+		return callback(0);
+
+	if(!remoteNode->m_childrenRequested)
+	{
+		// List the remote dir
+		auto url = remoteNode->remoteUrl([this](auto ino) { return nodeForIno(ino); });
+		auto *job = KIO::listDir(url);
+		connect(job, &KIO::ListJob::entries, [=](auto *job, const KIO::UDSEntryList &entries) {
+			Q_UNUSED(job);
+
+			for(auto &entry : entries)
+			{
+				QString name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
+
+				// Ignore "." and ".."
+				if(QStringList{QStringLiteral("."), QStringLiteral("..")}.contains(name))
+				   continue;
+
+				KIOFuseNode *childrenNode = nodeByName(remoteNode, name);
+				if(childrenNode)
+					// TODO: Verify that the type matches.
+					// It's possible that something was mounted as a directory,
+					// but it's actually a symlink :-/
+					continue;
+
+				childrenNode = createNodeFromUDSEntry(entry, remoteNode->m_stat.st_ino);
+				childrenNode->m_stat.st_ino = insertNode(childrenNode);
+			}
+		});
+		connect(job, &KIO::ListJob::result, [=] {
+			if(job->error())
+				emit remoteNode->gotChildren(EIO);
+			else
+			{
+				remoteNode->m_childrenComplete = true;
+				emit remoteNode->gotChildren(0);
+			}
+		});
+
+		remoteNode->m_childrenRequested = true;
+	}
+
+	// Using a unique_ptr here to let the lambda disconnect the connection itself
+	auto connection = std::make_unique<QMetaObject::Connection>();
+	auto &conn = *connection;
+	conn = connect(remoteNode, &KIOFuseRemoteDirNode::gotChildren,
+	               [=, connection = std::move(connection)](int error) {
+		callback(error);
+		remoteNode->disconnect(*connection);
+	}
+	);
+}
+
 void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> callback)
 {
 	int opEnd = cmd.indexOf(QLatin1Char(' '));
@@ -604,6 +698,12 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 			// "file:///home/foo"
 			// "ftp://dir/ectory/"
 			pathElements.removeAll(QStringLiteral(""));
+
+			if(pathElements.size() == 0)
+			{
+				callback(0);
+				return;
+			}
 
 			for(int i = 0; pathElements.size() > 1 && i < pathElements.size() - 1; ++i)
 			{

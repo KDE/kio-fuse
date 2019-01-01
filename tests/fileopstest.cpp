@@ -71,6 +71,7 @@ void FileOpsTest::testLocalFileOps()
 	QCOMPARE(localFile.write("teststring"), 10);
 	QVERIFY(localFile.flush());
 
+	// Mount the temporary file
 	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName()).toUtf8();
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
@@ -95,6 +96,19 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(localFile.seek(1));
 	QVERIFY(mirroredFile.seek(1));
 	QCOMPARE(localFile.readAll(), mirroredFile.readAll());
+
+	// Mount the data path and compare the directory content
+	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));
+	QVERIFY(!dataPath.isEmpty());
+	cmd = QStringLiteral("MOUNT file://%1").arg(dataPath).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QString mirrordataPath = QStringLiteral("%1/file%2").arg(m_mountDir.path()).arg(dataPath);
+
+	auto sourceEntryList = QDir(dataPath).entryList(QDir::NoFilter, QDir::Name);
+	auto mirrorEntryList = QDir(mirrordataPath).entryList(QDir::NoFilter, QDir::Name);
+
+	QCOMPARE(mirrorEntryList, sourceEntryList);
 }
 
 void FileOpsTest::testArchiveOps()
@@ -122,9 +136,6 @@ void FileOpsTest::testArchiveOps()
 	QFile innerarchiveFile(innerpath);
 	QVERIFY(innerarchiveFile.open(QIODevice::ReadOnly));
 	QVERIFY(!innerarchiveFile.readAll().isEmpty());
-
-	cmd = QStringLiteral("MOUNT tar://%1/innerarchive/innerfile").arg(innerpath).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
 	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path()).arg(innerpath));
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));

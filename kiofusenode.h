@@ -118,7 +118,7 @@ public:
 	bool m_childrenComplete = false, m_childrenRequested = false;
 
 Q_SIGNALS:
-	void gotChildren(bool success);
+	void gotChildren(int error);
 };
 
 class KIOFuseControlNode : public KIOFuseNode {
