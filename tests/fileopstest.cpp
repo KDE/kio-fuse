@@ -109,6 +109,12 @@ void FileOpsTest::testLocalFileOps()
 	auto mirrorEntryList = QDir(mirrordataPath).entryList(QDir::NoFilter, QDir::Name);
 
 	QCOMPARE(mirrorEntryList, sourceEntryList);
+
+	// Make sure dirlisting file:/// works
+	sourceEntryList = QDir(QStringLiteral("/")).entryList(QDir::NoFilter, QDir::Name);
+	mirrorEntryList = QDir(QStringLiteral("%1/file").arg(m_mountDir.path())).entryList(QDir::NoFilter, QDir::Name);
+
+	QCOMPARE(mirrorEntryList, sourceEntryList);
 }
 
 void FileOpsTest::testArchiveOps()
