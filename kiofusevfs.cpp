@@ -167,6 +167,13 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 	fuse_reply_attr(req, &node->m_stat, 1);
 }
 
+static void appendDirentry(std::vector<char> &dirbuf, fuse_req_t req, const char *name, const struct stat *stbuf)
+{
+	size_t oldsize = dirbuf.size();
+	dirbuf.resize(oldsize + fuse_add_direntry(req, nullptr, 0, name, nullptr, 0));
+	fuse_add_direntry(req, dirbuf.data() + oldsize, dirbuf.size() + oldsize, name, stbuf, dirbuf.size());
+}
+
 void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)
 {
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
@@ -184,6 +191,14 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	}
 
 	std::vector<char> dirbuf;
+	appendDirentry(dirbuf, req, ".", &node->m_stat);
+
+	KIOFuseNode *parentNode = that->nodeForIno(node->m_parentIno);
+	if(!parentNode)
+		parentNode = that->nodeForIno(KIOFuseIno::Root);
+	if(parentNode)
+		appendDirentry(dirbuf, req, "..", &parentNode->m_stat);
+
 	for(auto ino : node->as<KIOFuseDirNode>()->m_childrenInos)
 	{
 		KIOFuseNode *child = that->m_nodes[ino].get();
@@ -193,11 +208,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 			continue;
 		}
 
-		QByteArray childName = child->m_nodeName.toUtf8();
-
-		size_t oldsize = dirbuf.size();
-		dirbuf.resize(oldsize + fuse_add_direntry(req, nullptr, 0, childName.data(), nullptr, 0));
-		fuse_add_direntry(req, dirbuf.data() + oldsize, dirbuf.size() + oldsize, childName.data(), &child->m_stat, dirbuf.size());
+		appendDirentry(dirbuf, req, qPrintable(child->m_nodeName), &child->m_stat);
 	}
 
 	if(off < dirbuf.size())
@@ -256,7 +267,11 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 
 			fuse_reply_data(req, &buf, fuse_buf_copy_flags{});
 		});
+		break;
 	}
+	case KIOFuseNode::NodeType::ControlNode:
+		fuse_reply_buf(req, nullptr, 0);
+		break;
 	}
 }
 
