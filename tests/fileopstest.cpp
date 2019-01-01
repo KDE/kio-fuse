@@ -125,10 +125,6 @@ void FileOpsTest::testArchiveOps()
 	QVERIFY(outerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
 
-	// Next, mount an archive inside - this uses kio-fuse recursively
-	cmd = QStringLiteral("MOUNT tar://%1/outerarchive/innerarchive.tar.gz").arg(outerpath).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
-
 	QString innerpath = QStringLiteral("%1/tar%2/outerarchive/innerarchive.tar.gz").arg(m_mountDir.path()).arg(outerpath);
 
 	// Unfortunately kio_archive is not reentrant, so a direct access would deadlock.
@@ -136,6 +132,10 @@ void FileOpsTest::testArchiveOps()
 	QFile innerarchiveFile(innerpath);
 	QVERIFY(innerarchiveFile.open(QIODevice::ReadOnly));
 	QVERIFY(!innerarchiveFile.readAll().isEmpty());
+
+	// Next, mount an archive inside - this uses kio-fuse recursively
+	cmd = QStringLiteral("MOUNT tar://%1/innerarchive/innerfile").arg(innerpath).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
 	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path()).arg(innerpath));
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
