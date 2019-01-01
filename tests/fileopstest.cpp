@@ -140,7 +140,7 @@ void FileOpsTest::testArchiveOps()
 	QVERIFY(!innerarchiveFile.readAll().isEmpty());
 
 	// Next, mount an archive inside - this uses kio-fuse recursively
-	cmd = QStringLiteral("MOUNT tar://%1/innerarchive/innerfile").arg(innerpath).toUtf8();
+	cmd = QStringLiteral("MOUNT tar://%1").arg(innerpath).toUtf8();
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
 	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path()).arg(innerpath));

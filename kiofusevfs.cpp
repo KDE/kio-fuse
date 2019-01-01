@@ -355,7 +355,9 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		return;
 	}
 
-	if(auto child = that->nodeByName(parentNode, QString::fromUtf8(name)))
+	QString nodeName = QString::fromUtf8(name);
+
+	if(auto child = that->nodeByName(parentNode, nodeName))
 	{
 		// Found
 		child->m_lookupCount++;
@@ -381,8 +383,9 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		// Zero means invalid entry. Compared to an ENOENT reply, the kernel can cache this.
 		struct fuse_entry_param entry {};
 
-		if(auto child = that->nodeByName(parentNode, QString::fromUtf8(name)))
+		if(auto child = that->nodeByName(parentNode, nodeName))
 		{
+			qDebug() << "found" << name;
 			// Found
 			child->m_lookupCount++;
 
@@ -708,7 +711,7 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 			// Strip empty path elements, for instance in
 			// "file:///home/foo"
 			// "ftp://dir/ectory/"
-			pathElements.removeAll(QStringLiteral(""));
+			pathElements.removeAll({});
 
 			if(pathElements.size() == 0)
 			{
