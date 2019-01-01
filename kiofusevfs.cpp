@@ -523,7 +523,11 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 		});
 		connect(job, &KIO::TransferJob::result, [=] {
 			if(job->error())
+			{
+				fclose(node->m_localCache);
+				node->m_localCache = nullptr;
 				emit node->localCacheChanged(EIO);
+			}
 			else
 			{
 				node->m_cacheComplete = true;
@@ -594,6 +598,8 @@ void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<v
 			}
 		});
 		connect(job, &KIO::ListJob::result, [=] {
+			remoteNode->m_childrenRequested = false;
+
 			if(job->error())
 				emit remoteNode->gotChildren(EIO);
 			else
