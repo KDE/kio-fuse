@@ -115,6 +115,12 @@ void FileOpsTest::testLocalFileOps()
 	mirrorEntryList = QDir(QStringLiteral("%1/file").arg(m_mountDir.path())).entryList(QDir::NoFilter, QDir::Name);
 
 	QCOMPARE(mirrorEntryList, sourceEntryList);
+
+	QFile symlink(QDir(dataPath).filePath(QStringLiteral("symlink")));
+
+	QVERIFY(symlink.open(QIODevice::ReadOnly));
+	QCOMPARE(symlink.readAll(), QStringLiteral("symlinktargetcontent").toUtf8());
+	QCOMPARE(symlink.symLinkTarget(), QDir(dataPath).filePath(QStringLiteral("symlinktarget")));
 }
 
 void FileOpsTest::testArchiveOps()

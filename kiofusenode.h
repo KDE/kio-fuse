@@ -154,7 +154,4 @@ public:
 	static const NodeType Type = NodeType::RemoteSymlinkNode;
 	NodeType type() const override { return Type; }
 	QString m_target;
-
-Q_SIGNALS:
-	void gotSymlinkTarget(QString &target);
 };

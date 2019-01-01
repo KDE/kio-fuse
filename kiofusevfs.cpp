@@ -13,6 +13,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.lookup = &KIOFuseVFS::lookup,
 	.forget = &KIOFuseVFS::forget,
 	.getattr = &KIOFuseVFS::getattr,
+	.readlink = &KIOFuseVFS::readlink,
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
 	.readdir = &KIOFuseVFS::readdir,
@@ -166,6 +167,25 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 
 	// TODO: Validity timeout?
 	fuse_reply_attr(req, &node->m_stat, 1);
+}
+
+void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	if(node->type() != KIOFuseNode::NodeType::RemoteSymlinkNode)
+	{
+		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	fuse_reply_readlink(req, node->as<KIOFuseSymLinkNode>()->m_target.toUtf8().data());
 }
 
 static void appendDirentry(std::vector<char> &dirbuf, fuse_req_t req, const char *name, const struct stat *stbuf)
@@ -385,7 +405,6 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 
 		if(auto child = that->nodeByName(parentNode, nodeName))
 		{
-			qDebug() << "found" << name;
 			// Found
 			child->m_lookupCount++;
 
