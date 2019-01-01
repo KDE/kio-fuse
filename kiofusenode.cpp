@@ -16,6 +16,22 @@ template<> const KIOFuseDirNode *KIOFuseNode::as() const
 	return nullptr;
 }
 
+template<> KIOFuseRemoteDirNode *KIOFuseNode::as()
+{
+	if(type() == NodeType::RemoteDirNode || type() == NodeType::OriginNode)
+		return static_cast<KIOFuseRemoteDirNode*>(this);
+
+	return nullptr;
+}
+
+template<> const KIOFuseRemoteDirNode *KIOFuseNode::as() const
+{
+	if(type() == NodeType::RemoteDirNode || type() == NodeType::OriginNode)
+		return static_cast<const KIOFuseRemoteDirNode*>(this);
+
+	return nullptr;
+}
+
 QString KIOFuseNode::virtualPath(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const
 {
 	QStringList path;

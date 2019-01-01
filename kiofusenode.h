@@ -100,14 +100,6 @@ public:
 	NodeType type() const override { return Type; }
 };
 
-class KIOFuseOriginNode : public KIOFuseDirNode {
-public:
-	using KIOFuseDirNode::KIOFuseDirNode;
-	static const NodeType Type = NodeType::OriginNode;
-	NodeType type() const override { return Type; }
-	QUrl m_baseUrl;
-};
-
 class KIOFuseRemoteDirNode : public QObject, public KIOFuseDirNode {
 	Q_OBJECT
 public:
@@ -119,6 +111,14 @@ public:
 
 Q_SIGNALS:
 	void gotChildren(int error);
+};
+
+class KIOFuseOriginNode : public KIOFuseRemoteDirNode {
+public:
+	using KIOFuseRemoteDirNode::KIOFuseRemoteDirNode;
+	static const NodeType Type = NodeType::OriginNode;
+	NodeType type() const override { return Type; }
+	QUrl m_baseUrl;
 };
 
 class KIOFuseControlNode : public KIOFuseNode {
