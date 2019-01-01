@@ -49,12 +49,9 @@ QUrl KIOFuseNode::remoteUrl(std::function<KIOFuseNode *(fuse_ino_t)> nodeAccesso
 		if(currentNode->type() == NodeType::OriginNode)
 		{
 			// Origin node found - add path and return
-
-			// Add the leading slash
-			path.prepend({});
-
+			path.prepend({}); // Add a leading slash if necessary
 			QUrl url = currentNode->as<KIOFuseOriginNode>()->m_baseUrl;
-			url.setPath(path.join(QLatin1Char('/')), QUrl::DecodedMode);
+			url.setPath(url.path() + path.join(QLatin1Char('/')), QUrl::DecodedMode);
 			return url;
 		}
 

@@ -693,7 +693,11 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 				attr.st_mode = S_IFDIR | 0755;
 
 				originNode = new KIOFuseOriginNode(protocolNode->m_stat.st_ino, originNodeName, attr);
-				(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath({});
+				// Find out whether the base URL needs to start with a /
+				if(url.path().startsWith(QLatin1Char('/')))
+					(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath(QStringLiteral("/"));
+				else
+					(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath({});
 				originNode->m_stat.st_ino = insertNode(originNode);
 			}
 

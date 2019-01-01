@@ -1,3 +1,7 @@
 - opendir/readdir/releasedir could be more POSIX compliant by increasing the lookup count of
   children and storing a copy of childrenInos in fuse_file_info.
 - Install own signal handlers
+- Handle more FUSE ops
+- Implement st_mode access bits
+- Deal with invalid size reporting slaves (http/settings/...)?
+- Evaluate dynamic_cast compared to own implementation
