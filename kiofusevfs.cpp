@@ -492,8 +492,20 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	attr.st_size = entry.numberValue(KIO::UDSEntry::UDS_SIZE, 1);
 	attr.st_mode = entry.numberValue(KIO::UDSEntry::UDS_ACCESS, entry.isDir() ? 0755 : 0644);
 
-	// Check for link first as isDir can also be a link
-	if(entry.isLink())
+	if(entry.contains(KIO::UDSEntry::UDS_URL))
+	{
+		// Create as symlink if possible
+		QUrl url(entry.stringValue(KIO::UDSEntry::UDS_URL));
+		if(!url.isLocalFile())
+			return nullptr; // Maybe create a mountpoint (OriginNode) here?
+
+		attr.st_mode |= S_IFLNK;
+		auto *ret = new KIOFuseSymLinkNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
+		ret->m_target = url.toLocalFile();
+		attr.st_size = ret->m_target.size();
+		return ret;
+	}
+	else if(entry.isLink())	// Check for link first as isDir can also be a link
 	{
 		attr.st_mode |= S_IFLNK;
 		auto *ret = new KIOFuseSymLinkNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
@@ -616,6 +628,12 @@ void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<v
 					continue;
 
 				childrenNode = createNodeFromUDSEntry(entry, remoteNode->m_stat.st_ino);
+				if(!childrenNode)
+				{
+					qWarning() << "Could not create node for" << name;
+					continue;
+				}
+
 				childrenNode->m_stat.st_ino = insertNode(childrenNode);
 			}
 		});
