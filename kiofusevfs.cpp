@@ -7,6 +7,7 @@
 #include <KIO/StatJob>
 #include <KIO/TransferJob>
 
+#include "debug.h"
 #include "kiofusevfs.h"
 
 const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
@@ -128,14 +129,14 @@ void KIOFuseVFS::stop()
 		KIOFuseRemoteFileNode *remoteNode;
 		if(!node || !(remoteNode = node->as<KIOFuseRemoteFileNode>()) || !remoteNode->m_cacheDirty)
 		{
-			qWarning() << "Broken inode in dirty set";
+			qWarning(KIOFUSE_LOG) << "Broken inode in dirty set";
 			continue;
 		}
 
 		auto lockerPointer = std::make_shared<QEventLoopLocker>(&loop);
 		flushRemoteNode(remoteNode, [lp = std::move(lockerPointer)](int error) {
 			if(error)
-				qWarning() << "Failed to flush node";
+				qWarning(KIOFUSE_LOG) << "Failed to flush node";
 		});
 
 		needEventLoop = true;
@@ -175,7 +176,7 @@ void KIOFuseVFS::fuseRequestPending()
 		if (res <= 0)
 		{
 			if(res < 0) // Error
-				qWarning() << "Error reading FUSE request:" << strerror(errno);
+				qWarning(KIOFUSE_LOG) << "Error reading FUSE request:" << strerror(errno);
 
 			// Error or umounted -> quit
 			stop();
@@ -263,7 +264,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 			KIOFuseNode *child = that->m_nodes[ino].get();
 			if(!child)
 			{
-				qWarning() << "Node" << node->m_nodeName << "references nonexistant child";
+				qWarning(KIOFUSE_LOG) << "Node" << node->m_nodeName << "references nonexistant child";
 				continue;
 			}
 
@@ -437,7 +438,7 @@ KIOFuseNode *KIOFuseVFS::nodeByName(const KIOFuseNode *parent, const QString nam
 		KIOFuseNode *child = m_nodes[ino].get();
 		if(!child)
 		{
-			qWarning() << "Node" << parent->m_nodeName << "references nonexistant child";
+			qWarning(KIOFUSE_LOG) << "Node" << parent->m_nodeName << "references nonexistant child";
 			continue;
 		}
 
@@ -545,7 +546,7 @@ fuse_ino_t KIOFuseVFS::insertNode(KIOFuseNode *node)
 	if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
 		parentNodeIt->second.get()->as<KIOFuseDirNode>()->m_childrenInos.push_back(ino);
 	else
-		qWarning() << "Tried to insert node with invalid parent";
+		qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
 
 	return ino;
 }
@@ -719,7 +720,7 @@ void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<v
 				childrenNode = createNodeFromUDSEntry(entry, remoteNode->m_stat.st_ino);
 				if(!childrenNode)
 				{
-					qWarning() << "Could not create node for" << name;
+					qWarning(KIOFUSE_LOG) << "Could not create node for" << name;
 					continue;
 				}
 
@@ -772,7 +773,7 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 		connect(statJob, &KIO::StatJob::result, [=] {
 			if(statJob->error())
 			{
-				qDebug() << statJob->errorString();
+				qDebug(KIOFUSE_LOG) << statJob->errorString();
 				callback(EINVAL);
 				return;
 			}
@@ -881,7 +882,7 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 	}
 	else
 	{
-		qWarning() << "Unknown control operation" << op;
+		qWarning(KIOFUSE_LOG) << "Unknown control operation" << op;
 		return callback(EINVAL);
 	}
 }
@@ -891,7 +892,7 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 	if(!node->m_cacheDirty)
 		return callback(0);
 
-	qDebug() << "Flushing node" << node->m_nodeName;
+	qDebug(KIOFUSE_LOG) << "Flushing node" << node->m_nodeName;
 
 	// Clear the flag now to not lose any writes that happen while sending data.
 	node->m_cacheDirty = false;
@@ -916,7 +917,7 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 		if(fseek(node->m_localCache, bytesSent, SEEK_SET) == -1
 		   || !sane_fread(data.data(), toSend, node->m_localCache))
 		{
-			qWarning() << "Failed to read cache:" << strerror(errno);
+			qWarning(KIOFUSE_LOG) << "Failed to read cache:" << strerror(errno);
 			job->kill(KJob::EmitResult);
 			return;
 		}
@@ -926,7 +927,7 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 	connect(job, &KIO::TransferJob::result, [=] {
 		if(job->error())
 		{
-			qWarning() << "Failed to send data:" << job->errorString();
+			qWarning(KIOFUSE_LOG) << "Failed to send data:" << job->errorString();
 			node->m_cacheDirty = true;
 			m_dirtyNodes.insert(node->m_stat.st_ino);
 			return callback(EIO);

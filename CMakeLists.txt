@@ -36,6 +36,12 @@ set(KIOFUSE_SOURCES
 	kiofusenode.cpp
 	kiofusenode.h)
 
+ecm_qt_declare_logging_category(KIOFUSE_SOURCES
+   HEADER debug.h
+   IDENTIFIER KIOFUSE_LOG
+   CATEGORY_NAME org.kde.kio.fuse
+   DEFAULT_SEVERITY Warning)
+
 add_executable(kio-fuse ${KIOFUSE_SOURCES})
 target_include_directories(kio-fuse PRIVATE ${FUSE3_INCLUDE_DIRS})
 target_compile_definitions(kio-fuse PRIVATE FUSE_USE_VERSION=31 ${FUSE3_CFLAGS_OTHER})
