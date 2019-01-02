@@ -267,9 +267,16 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 			else if(!remoteNode->cacheIsComplete())
 			{
 				// Cache is being filled - wait until complete
-				that->connect(remoteNode, &KIOFuseRemoteFileNode::localCacheChanged, [=](int error) {
+				// Using a unique_ptr here to let the lambda disconnect the connection itself
+				auto connection = std::make_unique<QMetaObject::Connection>();
+				auto &conn = *connection;
+				conn = that->connect(remoteNode, &KIOFuseRemoteFileNode::localCacheChanged,
+				               [=, connection = std::move(connection)](int error) {
 					if(error)
+					{
 						fuse_reply_err(req, error);
+						remoteNode->disconnect(conn);
+					}
 					else if(remoteNode->cacheIsComplete())
 					{
 						// Create a new empty cache file
@@ -279,6 +286,7 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 						remoteNode->m_cacheDirty = true;
 
 						fuse_reply_open(req, fi);
+						remoteNode->disconnect(conn);
 					}
 				});
 				return;
@@ -391,6 +399,9 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 				else
 					actualSize = std::min(remoteNode->m_cacheSize - off, size);
 			}
+
+			// Make sure that the kernel has the data
+			fflush(remoteNode->m_localCache);
 
 			// Construct a buf pointing to the cache file
 			fuse_bufvec buf = FUSE_BUFVEC_INIT(actualSize);
