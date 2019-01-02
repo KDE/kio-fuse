@@ -253,7 +253,7 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
 		if(fi->flags & O_TRUNC)
 		{
-			if(!remoteNode->m_localCache || remoteNode->m_cacheComplete)
+			if(!remoteNode->m_localCache || remoteNode->cacheIsComplete())
 			{
 				// Cache not filled - just create an empty file
 				if(remoteNode->m_localCache)
@@ -262,16 +262,15 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 				// Create a mew the cache file
 				remoteNode->m_localCache = tmpfile();
 				remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
-				remoteNode->m_cacheComplete = true;
 				remoteNode->m_cacheDirty = true;
 			}
-			else if(!remoteNode->m_cacheComplete)
+			else if(!remoteNode->cacheIsComplete())
 			{
 				// Cache is being filled - wait until complete
 				that->connect(remoteNode, &KIOFuseRemoteFileNode::localCacheChanged, [=](int error) {
 					if(error)
 						fuse_reply_err(req, error);
-					else if(remoteNode->m_cacheComplete)
+					else if(remoteNode->cacheIsComplete())
 					{
 						// Create a new empty cache file
 						fclose(remoteNode->m_localCache);
@@ -394,7 +393,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 			}
 
 			// Construct a buf pointing to the cache file
-			fuse_bufvec buf = FUSE_BUFVEC_INIT(size);
+			fuse_bufvec buf = FUSE_BUFVEC_INIT(actualSize);
 			buf.buf[0].fd = fileno(remoteNode->m_localCache);
 			buf.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
 			buf.buf[0].pos = off;
@@ -692,8 +691,8 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 {
 	if(node->m_cacheSize >= bytes)
 		return callback(0); // Already available
-	else if(node->m_cacheComplete)
-		return callback(ESPIPE); // File shorter than bytes
+	else if(node->cacheIsComplete()) // Full cache is available...
+		return callback(ESPIPE); // ...but less than requested.
 
 	if(!node->m_localCache)
 	{
@@ -727,8 +726,8 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 			}
 			else
 			{
-				node->m_cacheComplete = true;
-				// Might be different from the attr size meanwhile, use the more recent value
+				// Might be different from the attr size meanwhile, use the more recent value.
+				// This also ensures that the cache is seen as complete.
 				node->m_stat.st_size = node->m_cacheSize;
 				emit node->localCacheChanged(0);
 			}
@@ -746,13 +745,14 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 			node->disconnect(*connection);
 		}
 
-		if(node->m_cacheSize >= bytes)
+		if(node->m_cacheSize >= bytes) // Requested data available
 		{
 			callback(0);
 			node->disconnect(*connection);
 		}
-		else if(node->m_cacheComplete)
+		else if(node->cacheIsComplete()) // Full cache is available...
 		{
+			// ...but less than requested.
 			callback(ESPIPE);
 			node->disconnect(*connection);
 		}

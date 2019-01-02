@@ -144,9 +144,10 @@ public:
 	static const NodeType Type = NodeType::RemoteFileNode;
 	NodeType type() const override { return Type; }
 	// Cache information
+	bool cacheIsComplete() { return m_cacheSize == size_t(m_stat.st_size); }
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
-	size_t m_cacheSize = 0; // Size of the local cache - might not be complete.
-	bool m_cacheComplete = false, m_cacheDirty = false;
+	size_t m_cacheSize = 0; // Size of the local cache - might be less than m_stat.st_size.
+	bool m_cacheDirty = false; // Whether the cache content/size changed locally.
 
 Q_SIGNALS:
 	// Emitted when a download operation on this node made progress, finished or failed.
