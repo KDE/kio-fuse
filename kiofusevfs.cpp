@@ -14,7 +14,9 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.lookup = &KIOFuseVFS::lookup,
 	.forget = &KIOFuseVFS::forget,
 	.getattr = &KIOFuseVFS::getattr,
+	.setattr = &KIOFuseVFS::setattr,
 	.readlink = &KIOFuseVFS::readlink,
+	.open =  &KIOFuseVFS::open,
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
 	.flush = &KIOFuseVFS::flush,
@@ -201,6 +203,11 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 	fuse_reply_attr(req, &node->m_stat, 1);
 }
 
+void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, fuse_file_info *fi)
+{
+	fuse_reply_err(req, ENOSYS);
+}
+
 void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 {
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
@@ -218,6 +225,72 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 	}
 
 	fuse_reply_readlink(req, node->as<KIOFuseSymLinkNode>()->m_target.toUtf8().data());
+}
+
+void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	if(node->type() <= KIOFuseNode::NodeType::LastDirType)
+	{
+		fuse_reply_err(req, EISDIR);
+		return;
+	}
+
+	switch(node->type())
+	{
+	default:
+		fuse_reply_open(req, fi);
+		return;
+	case KIOFuseNode::NodeType::RemoteFileNode:
+	{
+		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		if(fi->flags & O_TRUNC)
+		{
+			if(!remoteNode->m_localCache || remoteNode->m_cacheComplete)
+			{
+				// Cache not filled - just create an empty file
+				if(remoteNode->m_localCache)
+					fclose(remoteNode->m_localCache);
+
+				// Create a mew the cache file
+				remoteNode->m_localCache = tmpfile();
+				remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
+				remoteNode->m_cacheComplete = true;
+				remoteNode->m_cacheDirty = true;
+			}
+			else if(!remoteNode->m_cacheComplete)
+			{
+				// Cache is being filled - wait until complete
+				that->connect(remoteNode, &KIOFuseRemoteFileNode::localCacheChanged, [=](int error) {
+					if(error)
+						fuse_reply_err(req, error);
+					else if(remoteNode->m_cacheComplete)
+					{
+						// Create a new empty cache file
+						fclose(remoteNode->m_localCache);
+						remoteNode->m_localCache = tmpfile();
+						remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
+						remoteNode->m_cacheDirty = true;
+
+						fuse_reply_open(req, fi);
+					}
+				});
+				return;
+			}
+			else
+				Q_ASSERT(false);
+		}
+
+		fuse_reply_open(req, fi);
+	}
+	}
 }
 
 static void appendDirentry(std::vector<char> &dirbuf, fuse_req_t req, const char *name, const struct stat *stbuf)
@@ -655,6 +728,8 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 			else
 			{
 				node->m_cacheComplete = true;
+				// Might be different from the attr size meanwhile, use the more recent value
+				node->m_stat.st_size = node->m_cacheSize;
 				emit node->localCacheChanged(0);
 			}
 		});

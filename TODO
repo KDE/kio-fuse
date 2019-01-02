@@ -5,3 +5,4 @@
 - Implement st_mode access bits
 - Deal with invalid size reporting slaves (http/settings/...)?
 - Evaluate dynamic_cast compared to own implementation
+- Does O_APPEND need special treatment in write or is using off enough?

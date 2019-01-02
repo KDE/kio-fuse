@@ -116,6 +116,21 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(mirroredFile.seek(0));
 	QCOMPARE(localFile2.readAll(), mirroredFile.readAll());
 
+	// Test truncation
+	mirroredFile.close();
+	QVERIFY(mirroredFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	QCOMPARE(mirroredFile.write(QStringLiteral("tststrng").toUtf8()), 8);
+	QVERIFY(mirroredFile.flush());
+	// Flush the written contents into the backend
+	QCOMPARE(fsync(mirroredFile.handle()), 0);
+
+	// Reopen the file, see above.
+	localFile2.close();
+	QVERIFY(localFile2.open(QIODevice::ReadOnly));
+
+	// Compare the content
+	QCOMPARE(localFile2.readAll(), QStringLiteral("tststrng").toUtf8());
+
 	// Mount the data path and compare the directory content
 	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));
 	QVERIFY(!dataPath.isEmpty());
