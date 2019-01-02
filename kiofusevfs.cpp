@@ -16,6 +16,8 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.readlink = &KIOFuseVFS::readlink,
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
+	.flush = &KIOFuseVFS::flush,
+	.fsync = &KIOFuseVFS::fsync,
 	.readdir = &KIOFuseVFS::readdir,
 };
 
@@ -113,6 +115,35 @@ bool KIOFuseVFS::start(struct fuse_args &args, const char *mountpoint)
 
 void KIOFuseVFS::stop()
 {
+	// Flush all dirty nodes
+	QEventLoop loop;
+	bool needEventLoop = false;
+
+	for(auto it = m_dirtyNodes.begin(); it != m_dirtyNodes.end();)
+	{
+		KIOFuseNode *node = nodeForIno(*it);
+
+		++it; // Increment now as flushRemoteNode invalidates the iterator
+
+		KIOFuseRemoteFileNode *remoteNode;
+		if(!node || !(remoteNode = node->as<KIOFuseRemoteFileNode>()) || !remoteNode->m_cacheDirty)
+		{
+			qWarning() << "Broken inode in dirty set";
+			continue;
+		}
+
+		auto lockerPointer = std::make_shared<QEventLoopLocker>(&loop);
+		flushRemoteNode(remoteNode, [lp = std::move(lockerPointer)](int error) {
+			if(error)
+				qWarning() << "Failed to flush node";
+		});
+
+		needEventLoop = true;
+	}
+
+	if(needEventLoop)
+		loop.exec(); // Wait until all QEventLoopLockers got destroyed
+
 	if(m_fuseSession)
 	{
 		// Disable the QSocketNotifier
@@ -338,7 +369,65 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 		});
 		return;
 	}
+	case KIOFuseNode::NodeType::RemoteFileNode:
+	{
+		QByteArray data(buf, size); // Copy data
+		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		that->waitUntilBytesAvailable(remoteNode, off + size, [=](int error) {
+			if(error && error != ESPIPE)
+			{
+				fuse_reply_err(req, error);
+				return;
+			}
+
+			if(fseek(remoteNode->m_localCache, off, SEEK_SET) == -1
+			   || !sane_fwrite(data.data(), data.size(), remoteNode->m_localCache))
+			{
+				fuse_reply_err(req, errno);
+				return;
+			}
+
+			remoteNode->m_cacheSize = std::max(remoteNode->m_cacheSize, off + size);
+			remoteNode->m_stat.st_size = remoteNode->m_cacheSize;
+
+			remoteNode->m_cacheDirty = true;
+			that->m_dirtyNodes.insert(node->m_stat.st_ino);
+
+			fuse_reply_write(req, data.size());
+		});
 	}
+	}
+}
+
+void KIOFuseVFS::flush(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
+{
+	// This is called on each close of a FD, so it might be a bit overzealous
+	// do writeback here. I can't think of a better alternative though -
+	// doing it only on fsync and the final forget seems like a bit too late.
+
+	return fsync(req, ino, 1, fi);
+}
+
+void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_info *fi)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+	if(!remoteNode)
+	{
+		fuse_reply_err(req, 0);
+		return;
+	}
+
+	that->flushRemoteNode(remoteNode, [=](int error) {
+		fuse_reply_err(req, error);
+	});
 }
 
 KIOFuseNode *KIOFuseVFS::nodeByName(const KIOFuseNode *parent, const QString name)
@@ -795,4 +884,54 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 		qWarning() << "Unknown control operation" << op;
 		return callback(EINVAL);
 	}
+}
+
+void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void (int)> callback)
+{
+	if(!node->m_cacheDirty)
+		return callback(0);
+
+	qDebug() << "Flushing node" << node->m_nodeName;
+
+	// Clear the flag now to not lose any writes that happen while sending data.
+	node->m_cacheDirty = false;
+	m_dirtyNodes.extract(node->m_stat.st_ino);
+
+	auto url = node->remoteUrl([this](auto ino) { return nodeForIno(ino); });
+	auto *job = KIO::put(url, -1, KIO::Overwrite);
+	job->setTotalSize(node->m_cacheSize);
+
+	size_t bytesSent = 0; // Modified inside the lambda
+	connect(job, &KIO::TransferJob::dataReq, [=](auto *job, QByteArray &data) mutable {
+		Q_UNUSED(job);
+
+		// Someone truncated the file?
+		if(node->m_cacheSize <= bytesSent)
+			return;
+
+		size_t toSend = std::min(node->m_cacheSize - bytesSent, 1024*1024ul); // 1MiB max
+		data.resize(toSend);
+
+		// Read the cache file into the buffer
+		if(fseek(node->m_localCache, bytesSent, SEEK_SET) == -1
+		   || !sane_fread(data.data(), toSend, node->m_localCache))
+		{
+			qWarning() << "Failed to read cache:" << strerror(errno);
+			job->kill(KJob::EmitResult);
+			return;
+		}
+
+		bytesSent += toSend;
+	});
+	connect(job, &KIO::TransferJob::result, [=] {
+		if(job->error())
+		{
+			qWarning() << "Failed to send data:" << job->errorString();
+			node->m_cacheDirty = true;
+			m_dirtyNodes.insert(node->m_stat.st_ino);
+			return callback(EIO);
+		}
+
+		callback(0);
+	});
 }

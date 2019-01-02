@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <set>
 #include <unordered_map>
 
 #include <QEventLoopLocker>
@@ -54,6 +55,8 @@ private:
 	                 struct fuse_file_info *fi);
 	static void write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 	                  size_t size, off_t off, struct fuse_file_info *fi);
+	static void flush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
+	static void fsync(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info *fi);
 
 private:
 	// Returns nullptr if not found. Ownership remains at m_nodes.
@@ -71,8 +74,11 @@ private:
 	void waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t bytes, std::function<void(int error)> callback);
 	// Invokes callback on error or when all children nodes are available
 	void waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<void(int error)> callback);
-	// Handle the _control command in cmd asynchronously and call callback upon completion
+	// Handle the _control command in cmd asynchronously and call callback upon completion or failure.
 	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
+	// If the cache is dirty, writes the local cache to the remote. Callback is called on success, failure
+	// or if cache was not dirty.
+	void flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void(int error)> callback);
 
 	static const struct fuse_lowlevel_ops fuse_ll_ops;
 
@@ -81,8 +87,13 @@ private:
 
 	struct fuse_session *m_fuseSession = nullptr;
 	std::unique_ptr<QSocketNotifier> m_fuseNotifier;
+
+	// Set of nodes that need flushing
+	std::set<fuse_ino_t> m_dirtyNodes;
+
 	// Might not actually be free, so check m_nodes first
 	fuse_ino_t m_nextIno = KIOFuseIno::DynamicStart;
+	// Map of all known inodes to KIOFuseNodes
 	std::unordered_map<fuse_ino_t, std::unique_ptr<KIOFuseNode>> m_nodes;
 };
 

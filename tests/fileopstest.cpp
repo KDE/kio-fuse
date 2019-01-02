@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 #include <QTest>
 #include <QProcess>
 
@@ -96,6 +98,23 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(localFile.seek(1));
 	QVERIFY(mirroredFile.seek(1));
 	QCOMPARE(localFile.readAll(), mirroredFile.readAll());
+
+	// Write new data
+	QVERIFY(mirroredFile.seek(0));
+	QCOMPARE(mirroredFile.write(QStringLiteral("newteststring!").toUtf8()), 14);
+	QVERIFY(mirroredFile.flush());
+	// Flush the written contents into the backend
+	QCOMPARE(fsync(mirroredFile.handle()), 0);
+
+	// Currently, kio-fuse uses KIO::put and not KIO::write, so the file was replaced
+	// instead of changed. So reopen the file.
+	QFile localFile2(localFile.fileName());
+	QVERIFY(localFile2.open(QIODevice::ReadOnly));
+
+	// Compare the content
+	QVERIFY(localFile2.seek(0));
+	QVERIFY(mirroredFile.seek(0));
+	QCOMPARE(localFile2.readAll(), mirroredFile.readAll());
 
 	// Mount the data path and compare the directory content
 	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));

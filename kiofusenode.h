@@ -107,9 +107,14 @@ public:
 	static const NodeType Type = NodeType::RemoteDirNode;
 	NodeType type() const override { return Type; }
 
-	bool m_childrenComplete = false, m_childrenRequested = false;
+	// Whether the list of children is the result of a successful dirlist
+	bool m_childrenComplete = false;
+	// Whether a dirlist was requested. If true, the signal "gotChildren" will
+	// be emitted on finish.
+	bool m_childrenRequested = false;
 
 Q_SIGNALS:
+	// Emitted after finishing (successful or not) a distlist on this node
 	void gotChildren(int error);
 };
 
@@ -140,10 +145,11 @@ public:
 	NodeType type() const override { return Type; }
 	// Cache information
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
-	size_t m_cacheSize = 0;
+	size_t m_cacheSize = 0; // Size of the local cache - might not be complete.
 	bool m_cacheComplete = false, m_cacheDirty = false;
 
 Q_SIGNALS:
+	// Emitted when a download operation on this node made progress, finished or failed.
 	void localCacheChanged(int error);
 };
 
