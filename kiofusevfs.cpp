@@ -739,7 +739,7 @@ void KIOFuseVFS::fillStatForFile(struct stat &attr)
 
 	clock_gettime(CLOCK_REALTIME, &attr.st_atim);
 	attr.st_mtim = attr.st_atim;
-	attr.st_ctim = attr.st_ctim;
+	attr.st_ctim = attr.st_atim;
 }
 
 KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno)
@@ -754,6 +754,17 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	fillStatForFile(attr);
 	attr.st_size = entry.numberValue(KIO::UDSEntry::UDS_SIZE, 1);
 	attr.st_mode = entry.numberValue(KIO::UDSEntry::UDS_ACCESS, entry.isDir() ? 0755 : 0644);
+	if(entry.contains(KIO::UDSEntry::UDS_MODIFICATION_TIME))
+	{
+		attr.st_mtim.tv_sec = entry.numberValue(KIO::UDSEntry::UDS_MODIFICATION_TIME);
+		attr.st_mtim.tv_nsec = 0;
+	}
+	if(entry.contains(KIO::UDSEntry::UDS_ACCESS_TIME))
+	{
+		attr.st_atim.tv_sec = entry.numberValue(KIO::UDSEntry::UDS_ACCESS_TIME);
+		attr.st_atim.tv_nsec = 0;
+	}
+	// No support for ctim/btim in KIO...
 
 	if(entry.contains(KIO::UDSEntry::UDS_URL))
 	{

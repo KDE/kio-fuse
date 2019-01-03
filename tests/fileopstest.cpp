@@ -19,6 +19,8 @@ private Q_SLOTS:
 	void testArchiveOps();
 
 private:
+	QDateTime roundDownToSecond(QDateTime dt);
+
 	QFile m_controlFile;
 	QTemporaryDir m_mountDir;
 };
@@ -84,6 +86,17 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(mirroredFile.exists());
 	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 	QCOMPARE(mirroredFile.size(), localFile.size());
+
+	// Compare file metadata
+	QFileInfo localFileInfo(localFile.fileName()),
+	          mirroredFileInfo(mirroredFile.fileName());
+
+	QCOMPARE(mirroredFileInfo.size(), localFileInfo.size());
+	// Not supported by KIO
+	// QCOMPARE(mirroredFileInfo.metadataChangeTime(), localFileInfo.metadataChangeTime());
+	// KIO does not expose times with sub-second precision
+	QCOMPARE(mirroredFileInfo.lastModified(), roundDownToSecond(localFileInfo.lastModified()));
+	QCOMPARE(mirroredFileInfo.lastRead(), roundDownToSecond(localFileInfo.lastRead()));
 
 	// Compare the content
 	QVERIFY(localFile.seek(0));
@@ -190,6 +203,11 @@ void FileOpsTest::testArchiveOps()
 	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path()).arg(innerpath));
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
+}
+
+QDateTime FileOpsTest::roundDownToSecond(QDateTime dt)
+{
+	return QDateTime::fromTime_t(dt.toTime_t());
 }
 
 QTEST_GUILESS_MAIN(FileOpsTest)
