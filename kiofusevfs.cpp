@@ -751,10 +751,14 @@ void KIOFuseVFS::replyAttr(fuse_req_t req, KIOFuseNode *node)
 	fuse_reply_attr(req, &node->m_stat, 1);
 }
 
-KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno)
+KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride)
 {
-	if(!entry.contains(KIO::UDSEntry::UDS_NAME))
-		return nullptr;
+	QString name = nameOverride;
+	if(name.isEmpty())
+		name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
+	if(name.isEmpty() || name.contains(QLatin1Char('/'))
+	   || name == QStringLiteral(".") || name == QStringLiteral(".."))
+		return nullptr; // Reject invalid names
 
 	// TODO: Copy comment from kiofuse here that explains why 755 is necessary here
 
@@ -791,7 +795,7 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 			return nullptr; // Maybe create a mountpoint (OriginNode) here?
 
 		attr.st_mode |= S_IFLNK;
-		auto *ret = new KIOFuseSymLinkNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
+		auto *ret = new KIOFuseSymLinkNode(parentIno, name, attr);
 		ret->m_target = target;
 		ret->m_stat.st_size = ret->m_target.toUtf8().length();
 		return ret;
@@ -799,7 +803,7 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	else if(entry.isLink())	// Check for link first as isDir can also be a link
 	{
 		attr.st_mode |= S_IFLNK;
-		auto *ret = new KIOFuseSymLinkNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
+		auto *ret = new KIOFuseSymLinkNode(parentIno, name, attr);
 		ret->m_target = entry.stringValue(KIO::UDSEntry::UDS_LINK_DEST);
 		attr.st_size = ret->m_target.size();
 		return ret;
@@ -807,12 +811,12 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	else if(entry.isDir())
 	{
 		attr.st_mode |= S_IFDIR;
-		return new KIOFuseRemoteDirNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
+		return new KIOFuseRemoteDirNode(parentIno, name, attr);
 	}
 	else // it's a regular file
 	{
 		attr.st_mode |= S_IFREG;
-		return new KIOFuseRemoteFileNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
+		return new KIOFuseRemoteFileNode(parentIno, name, attr);
 	}
 }
 
@@ -911,7 +915,7 @@ void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<v
 				QString name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
 
 				// Ignore "." and ".."
-				if(QStringList{QStringLiteral("."), QStringLiteral("..")}.contains(name))
+				if(name == QStringLiteral(".") || name == QStringLiteral(".."))
 				   continue;
 
 				KIOFuseNode *childrenNode = nodeByName(remoteNode, name);
@@ -1073,12 +1077,13 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 			KIOFuseNode *finalNode = nodeByName(pathNode, pathElements.last());
 			if(!finalNode)
 			{
-				finalNode = createNodeFromUDSEntry(statJob->statResult(), pathNode->m_stat.st_ino);
-				finalNode->m_stat.st_ino = insertNode(finalNode);
-
 				// The remote name (statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME)) has to be
 				// ignored as it can be different from the path. e.g. tar:/foo.tar/ is "/"
-				finalNode->m_nodeName = pathElements.last();
+				finalNode = createNodeFromUDSEntry(statJob->statResult(), pathNode->m_stat.st_ino, pathElements.last());
+				if(!finalNode)
+					return callback(EIO);
+
+				finalNode->m_stat.st_ino = insertNode(finalNode);
 			}
 
 			callback(0);

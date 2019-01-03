@@ -72,7 +72,7 @@ private:
 	// Sends the struct attr to fuse
 	static void replyAttr(fuse_req_t req, KIOFuseNode *node);
 	// Creates a new node on the heap with the matching type and fills m_stat fields.
-	KIOFuseNode* createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno);
+	KIOFuseNode* createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride={});
 	// Invokes callback on error or when the bytes are available for reading/writing.
 	// If the file is not as big, it sets error = ESPIPE.
 	void waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t bytes, std::function<void(int error)> callback);
