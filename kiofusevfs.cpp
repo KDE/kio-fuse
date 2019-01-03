@@ -766,17 +766,20 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	}
 	// No support for ctim/btim in KIO...
 
-	if(entry.contains(KIO::UDSEntry::UDS_URL))
+	if(entry.contains(KIO::UDSEntry::UDS_LOCAL_PATH) || entry.contains(KIO::UDSEntry::UDS_URL))
 	{
 		// Create as symlink if possible
-		QUrl url(entry.stringValue(KIO::UDSEntry::UDS_URL));
-		if(!url.isLocalFile())
+		QString target = entry.stringValue(KIO::UDSEntry::UDS_LOCAL_PATH);
+		if(target.isEmpty())
+			target = QUrl(entry.stringValue(KIO::UDSEntry::UDS_URL)).toLocalFile();
+
+		if(target.isEmpty())
 			return nullptr; // Maybe create a mountpoint (OriginNode) here?
 
 		attr.st_mode |= S_IFLNK;
 		auto *ret = new KIOFuseSymLinkNode(parentIno, entry.stringValue(KIO::UDSEntry::UDS_NAME), attr);
-		ret->m_target = url.toLocalFile();
-		attr.st_size = ret->m_target.size();
+		ret->m_target = target;
+		ret->m_stat.st_size = ret->m_target.toUtf8().length();
 		return ret;
 	}
 	else if(entry.isLink())	// Check for link first as isDir can also be a link
