@@ -205,7 +205,97 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 
 void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, fuse_file_info *fi)
 {
-	fuse_reply_err(req, ENOSYS);
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	switch(node->type())
+	{
+	default:
+		fuse_reply_err(req, EOPNOTSUPP);
+		return;
+	case KIOFuseNode::NodeType::RemoteFileNode:
+	{
+		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		if(to_set & ~(FUSE_SET_ATTR_SIZE)) // Unsupported operation requested?
+		{
+			// Don't do anything
+			fuse_reply_err(req, EOPNOTSUPP);
+			return;
+		}
+
+		// Can anything be done directly?
+
+		if(to_set & FUSE_SET_ATTR_SIZE)
+		{
+			// Can be done directly if the new size is zero (and there is no get going on).
+			// This is an optimization to avoid fetching the entire file just to ignore its content.
+			if(!remoteNode->m_localCache && attr->st_size == 0)
+			{
+				// Just create an empty file
+				remoteNode->m_localCache = tmpfile();
+				remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
+				remoteNode->m_cacheDirty = true;
+
+				to_set &= ~FUSE_SET_ATTR_SIZE; // Done already!
+			}
+		}
+
+		if(!to_set) // Done already?
+		{
+			fuse_reply_attr(req, &node->m_stat, 1);
+			return;
+		}
+
+		// Everything else has to be done async - but there might be multiple ops that
+		// need to be coordinated. If an operation completes and clearing its value(s)
+		// in to_set_remaining leaves a zero value, it replies with fuse_reply_attr if
+		// error is zero and fuse_reply_err(error) otherwise.
+		struct SetattrState {
+			int to_set_remaining;
+			int error;
+			struct stat value;
+		};
+
+		auto sharedState = std::make_shared<SetattrState>((SetattrState){to_set, 0, *attr});
+
+		if(to_set & FUSE_SET_ATTR_SIZE)
+		{
+			// Have to wait until the cache is complete to truncate.
+			// Waiting until all bytes up to the truncation point are available won't work,
+			// as the fetch function would just overwrite the cache.
+			that->waitUntilBytesAvailable(remoteNode, SIZE_MAX, [=](int error) {
+				if(error && error != ESPIPE)
+					sharedState->error = error;
+				else // Cache complete!
+				{
+					// Truncate the cache file
+					if(fflush(remoteNode->m_localCache) != 0
+					    || ftruncate(fileno(remoteNode->m_localCache), sharedState->value.st_size) == -1)
+						sharedState->error = errno;
+					else
+					{
+						remoteNode->m_cacheSize = remoteNode->m_stat.st_size = sharedState->value.st_size;
+						remoteNode->m_cacheDirty = true;
+					}
+				}
+
+				sharedState->to_set_remaining &= ~FUSE_SET_ATTR_SIZE;
+				if(!sharedState->to_set_remaining)
+				{
+					if(sharedState->error)
+						fuse_reply_err(req, sharedState->error);
+					else
+						fuse_reply_attr(req, &remoteNode->m_stat, 1);
+				}
+			});
+		}
+	}
+	}
 }
 
 void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
