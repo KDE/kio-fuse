@@ -199,8 +199,7 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		return;
 	}
 
-	// TODO: Validity timeout?
-	fuse_reply_attr(req, &node->m_stat, 1);
+	that->replyAttr(req, node);
 }
 
 void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, fuse_file_info *fi)
@@ -247,7 +246,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 
 		if(!to_set) // Done already?
 		{
-			fuse_reply_attr(req, &node->m_stat, 1);
+			replyAttr(req, node);
 			return;
 		}
 
@@ -290,7 +289,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 					if(sharedState->error)
 						fuse_reply_err(req, sharedState->error);
 					else
-						fuse_reply_attr(req, &remoteNode->m_stat, 1);
+						replyAttr(req, remoteNode);
 				}
 			});
 		}
@@ -734,12 +733,22 @@ void KIOFuseVFS::fillStatForFile(struct stat &attr)
 	attr.st_uid = uid;
 	attr.st_gid = gid;
 	attr.st_size = 1;
-	attr.st_blksize = 4096;
+	attr.st_blksize = 512;
+	// This is set to match st_size by replyAttr
 	attr.st_blocks = 1;
 
 	clock_gettime(CLOCK_REALTIME, &attr.st_atim);
 	attr.st_mtim = attr.st_atim;
 	attr.st_ctim = attr.st_atim;
+}
+
+void KIOFuseVFS::replyAttr(fuse_req_t req, KIOFuseNode *node)
+{
+	// Set st_blocks accordingly
+	node->m_stat.st_blocks = (node->m_stat.st_size + node->m_stat.st_blksize - 1) / node->m_stat.st_blksize;
+
+	// TODO: Validity timeout?
+	fuse_reply_attr(req, &node->m_stat, 1);
 }
 
 KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno)
@@ -765,6 +774,11 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 		attr.st_atim.tv_nsec = 0;
 	}
 	// No support for ctim/btim in KIO...
+
+	// Setting UID and GID here to UDS_USER/UDS_GROUP respectively would not lead to the expected
+	// results as those values might only be meaningful on the remote side.
+	// As access checks are only performed by the remote side, it shouldn't matter much anyway.
+	// It does mean that chmod/chown are pointless as well.
 
 	if(entry.contains(KIO::UDSEntry::UDS_LOCAL_PATH) || entry.contains(KIO::UDSEntry::UDS_URL))
 	{

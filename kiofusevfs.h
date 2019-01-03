@@ -69,6 +69,8 @@ private:
 	fuse_ino_t insertNode(KIOFuseNode *node);
 	// Fills a (previously zeroed out) struct stat with minimal information
 	void fillStatForFile(struct stat &attr);
+	// Sends the struct attr to fuse
+	static void replyAttr(fuse_req_t req, KIOFuseNode *node);
 	// Creates a new node on the heap with the matching type and fills m_stat fields.
 	KIOFuseNode* createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno);
 	// Invokes callback on error or when the bytes are available for reading/writing.
