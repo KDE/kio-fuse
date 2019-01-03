@@ -10,6 +10,12 @@
 #include "debug.h"
 #include "kiofusevfs.h"
 
+// The libfuse macros make this necessary
+#pragma GCC diagnostic ignored "-Wpedantic"
+#pragma GCC diagnostic ignored "-Wzero-as-null-pointer-constant"
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.lookup = &KIOFuseVFS::lookup,
 	.forget = &KIOFuseVFS::forget,
@@ -23,6 +29,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.fsync = &KIOFuseVFS::fsync,
 	.readdir = &KIOFuseVFS::readdir,
 };
+#pragma GCC diagnostic pop
 
 /* Handles partial writes.
  * Returns true only if count bytes were written successfully. */
@@ -191,6 +198,7 @@ void KIOFuseVFS::fuseRequestPending()
 
 void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 {
+	Q_UNUSED(fi);
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	KIOFuseNode *node = that->nodeForIno(ino);
 	if(!node)
@@ -204,6 +212,7 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 
 void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, fuse_file_info *fi)
 {
+	Q_UNUSED(fi);
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	KIOFuseNode *node = that->nodeForIno(ino);
 	if(!node)
@@ -398,6 +407,7 @@ static void appendDirentry(std::vector<char> &dirbuf, fuse_req_t req, const char
 
 void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)
 {
+	Q_UNUSED(fi);
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	KIOFuseNode *node = that->nodeForIno(ino);
 	if(!node)
@@ -440,7 +450,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 			appendDirentry(dirbuf, req, qPrintable(child->m_nodeName), &child->m_stat);
 		}
 
-		if(off < dirbuf.size())
+		if(off < off_t(dirbuf.size()))
 			fuse_reply_buf(req, dirbuf.data() + off, std::min(size, dirbuf.size() - off));
 		else
 			fuse_reply_buf(req, nullptr, 0);
@@ -449,6 +459,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)
 {
+	Q_UNUSED(fi);
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	KIOFuseNode *node = that->nodeForIno(ino);
 	if(!node)
@@ -483,7 +494,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 			if(error == ESPIPE)
 			{
 				// Reading over the end
-				if(off >= remoteNode->m_cacheSize)
+				if(off >= off_t(remoteNode->m_cacheSize))
 					actualSize = 0;
 				else
 					actualSize = std::min(remoteNode->m_cacheSize - off, size);
@@ -510,6 +521,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 
 void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, fuse_file_info *fi)
 {
+	Q_UNUSED(fi);
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	KIOFuseNode *node = that->nodeForIno(ino);
 	if(!node)
@@ -583,6 +595,7 @@ void KIOFuseVFS::flush(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 
 void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_info *fi)
 {
+	Q_UNUSED(datasync); Q_UNUSED(fi);
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	KIOFuseNode *node = that->nodeForIno(ino);
 	if(!node)
@@ -759,8 +772,6 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	if(name.isEmpty() || name.contains(QLatin1Char('/'))
 	   || name == QStringLiteral(".") || name == QStringLiteral(".."))
 		return nullptr; // Reject invalid names
-
-	// TODO: Copy comment from kiofuse here that explains why 755 is necessary here
 
 	// Create a stat struct with default values
 	struct stat attr = {};

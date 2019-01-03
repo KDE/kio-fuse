@@ -82,7 +82,7 @@ void FileOpsTest::testLocalFileOps()
 	// Doing the same again should work just fine
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
-	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path()).arg(localFile.fileName()));
+	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
 	QVERIFY(mirroredFile.exists());
 	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 	QCOMPARE(mirroredFile.size(), localFile.size());
@@ -154,7 +154,7 @@ void FileOpsTest::testLocalFileOps()
 	cmd = QStringLiteral("MOUNT file://%1").arg(dataPath).toUtf8();
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
-	QString mirrordataPath = QStringLiteral("%1/file%2").arg(m_mountDir.path()).arg(dataPath);
+	QString mirrordataPath = QStringLiteral("%1/file%2").arg(m_mountDir.path(), dataPath);
 
 	auto sourceEntryList = QDir(dataPath).entryList(QDir::NoFilter, QDir::Name);
 	auto mirrorEntryList = QDir(mirrordataPath).entryList(QDir::NoFilter, QDir::Name);
@@ -183,12 +183,12 @@ void FileOpsTest::testArchiveOps()
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
 	// And verify its content
-	QString outerfilepath = QStringLiteral("%1/tar%2/outerarchive/outerfile").arg(m_mountDir.path()).arg(outerpath);
+	QString outerfilepath = QStringLiteral("%1/tar%2/outerarchive/outerfile").arg(m_mountDir.path(), outerpath);
 	QFile outerfile(outerfilepath);
 	QVERIFY(outerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
 
-	QString innerpath = QStringLiteral("%1/tar%2/outerarchive/innerarchive.tar.gz").arg(m_mountDir.path()).arg(outerpath);
+	QString innerpath = QStringLiteral("%1/tar%2/outerarchive/innerarchive.tar.gz").arg(m_mountDir.path(), outerpath);
 
 	// Unfortunately kio_archive is not reentrant, so a direct access would deadlock.
 	// As a workaround, cache the file to avoid a 2nd call into kio_archive.
@@ -200,7 +200,7 @@ void FileOpsTest::testArchiveOps()
 	cmd = QStringLiteral("MOUNT tar://%1").arg(innerpath).toUtf8();
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
-	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path()).arg(innerpath));
+	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path(), innerpath));
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
 }
