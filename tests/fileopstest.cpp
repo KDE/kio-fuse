@@ -1,3 +1,4 @@
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <QTest>
@@ -88,10 +89,12 @@ void FileOpsTest::testLocalFileOps()
 	QCOMPARE(mirroredFile.size(), localFile.size());
 
 	// Compare file metadata
-	QFileInfo localFileInfo(localFile.fileName()),
-	          mirroredFileInfo(mirroredFile.fileName());
+	QFileInfo localFileInfo(localFile),
+	          mirroredFileInfo(mirroredFile);
 
 	QCOMPARE(mirroredFileInfo.size(), localFileInfo.size());
+	QCOMPARE(mirroredFileInfo.ownerId(), localFileInfo.ownerId());
+	QCOMPARE(mirroredFileInfo.groupId(), localFileInfo.groupId());
 	// Not supported by KIO
 	// QCOMPARE(mirroredFileInfo.metadataChangeTime(), localFileInfo.metadataChangeTime());
 	// KIO does not expose times with sub-second precision
@@ -147,6 +150,24 @@ void FileOpsTest::testLocalFileOps()
 	localFile2.close(); // Reopen the file, see above.
 	QVERIFY(localFile2.open(QIODevice::ReadOnly));
 	QCOMPARE(localFile2.readAll(), QStringLiteral("tst").toUtf8()); // Compare the content
+
+	// Test chown by not changing anything (no CAP_CHOWN...)
+	QCOMPARE(chown(mirroredFile.fileName().toUtf8().data(), getuid(), getgid()), 0);
+	localFileInfo = QFileInfo(localFile);
+	QCOMPARE(localFileInfo.ownerId(), getuid());
+	QCOMPARE(localFileInfo.groupId(), getgid());
+	// Should not be allowed
+	QCOMPARE(chown(mirroredFile.fileName().toUtf8().data(), getuid(), 0), -1);
+	QCOMPARE(chown(mirroredFile.fileName().toUtf8().data(), 0, getgid()), -1);
+
+	// Test chmod
+	QCOMPARE(chmod(mirroredFile.fileName().toUtf8().data(), 0054), 0);
+	struct stat attr;
+	QVERIFY(stat(localFile.fileName().toUtf8().data(), &attr) == 0);
+	QCOMPARE(attr.st_mode, S_IFREG | 0054);
+	QCOMPARE(chmod(mirroredFile.fileName().toUtf8().data(), 0600), 0);
+	QVERIFY(stat(localFile.fileName().toUtf8().data(), &attr) == 0);
+	QCOMPARE(attr.st_mode, S_IFREG | 0600);
 
 	// Mount the data path and compare the directory content
 	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));

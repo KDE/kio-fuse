@@ -1,11 +1,22 @@
 - opendir/readdir/releasedir could be more POSIX compliant by increasing the lookup count of
   children and storing a copy of childrenInos in fuse_file_info.
 - Install own signal handlers
-- Handle more FUSE ops
-- Implement st_mode access bits
-- Deal with invalid size reporting slaves (http/settings/...)?
+- Handle more FUSE ops:
+  * mknod
+  * unlink
+  * rename
+  * statvfs
+  * setattr with modification time
+  * ACLs (?)
+- Deal with invalid size reporting slaves (http/...)?
 - Evaluate dynamic_cast compared to own implementation
 - Does O_APPEND need special treatment in write or is using off enough?
 - Do st_[acm]tim need to be updated manually?
 - Fix kdeconnect:// to return all children in readdir and not just an incomplete list of broken
   links (or add a workaround?)
+- Refresh attributes of files/dirs and children of dirs after a while
+- Flush dirty cache files automatically after being unused for a while
+- Drop unused cache files after a while (?)
+- Look into using KIO::read/KIO::write if possible:
+  * Needs ::open to succeed, has state per slave (?)
+  * Does not support truncation, so ::put is still necessary

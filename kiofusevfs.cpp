@@ -72,7 +72,6 @@ KIOFuseVFS::KIOFuseVFS(QObject *parent)
 	fillStatForFile(attr);
 	attr.st_mode = S_IFDIR | 0755;
 
-	// TODO: Add insert function?
 	auto root = std::make_unique<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
 	root->m_stat.st_ino = KIOFuseIno::Root;
 
@@ -229,7 +228,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
 		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
-		if(to_set & ~(FUSE_SET_ATTR_SIZE)) // Unsupported operation requested?
+		if(to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
+		              | FUSE_SET_ATTR_MODE)) // Unsupported operation requested?
 		{
 			// Don't do anything
 			fuse_reply_err(req, EOPNOTSUPP);
@@ -293,6 +293,72 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				}
 
 				sharedState->to_set_remaining &= ~FUSE_SET_ATTR_SIZE;
+				if(!sharedState->to_set_remaining)
+				{
+					if(sharedState->error)
+						fuse_reply_err(req, sharedState->error);
+					else
+						replyAttr(req, remoteNode);
+				}
+			});
+		}
+
+		if(to_set & (FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID))
+		{
+			// KIO uses strings for passing user and group, but the VFS uses IDs exclusively.
+			// So this needs a roundtrip.
+
+			uid_t newUid = (to_set & FUSE_SET_ATTR_UID) ? attr->st_uid : node->m_stat.st_uid;
+			gid_t newGid = (to_set & FUSE_SET_ATTR_GID) ? attr->st_gid : node->m_stat.st_gid;
+			auto *pw = getpwuid(newUid);
+			auto *gr = getgrgid(newGid);
+
+			if(!pw || !gr)
+			{
+				sharedState->to_set_remaining &= ~(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
+				sharedState->error = ENOENT;
+			}
+			else
+			{
+				QString newOwner = QString::fromUtf8(pw->pw_name),
+				        newGroup = QString::fromUtf8(gr->gr_name);
+
+				auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+				auto *job = KIO::chown(url, newOwner, newGroup);
+				that->connect(job, &KIO::SimpleJob::finished, [=] {
+					if(job->error())
+						sharedState->error = EIO;
+					else
+					{
+						remoteNode->m_stat.st_uid = newUid;
+						remoteNode->m_stat.st_gid = newGid;
+					}
+
+					sharedState->to_set_remaining &= ~(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
+					if(!sharedState->to_set_remaining)
+					{
+						if(sharedState->error)
+							fuse_reply_err(req, sharedState->error);
+						else
+							replyAttr(req, remoteNode);
+					}
+				});
+			}
+		}
+
+		if(to_set & (FUSE_SET_ATTR_MODE))
+		{
+			auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+			auto newMode = attr->st_mode & ~S_IFMT;
+			qDebug() << newMode;
+			auto *job = KIO::chmod(url, newMode);
+			that->connect(job, &KIO::SimpleJob::finished, [=] {
+				if(job->error())
+					sharedState->error = EIO;
+				else
+					remoteNode->m_stat.st_mode = (remoteNode->m_stat.st_mode & S_IFMT) | newMode;
+
+				sharedState->to_set_remaining &= ~FUSE_SET_ATTR_MODE;
 				if(!sharedState->to_set_remaining)
 				{
 					if(sharedState->error)
@@ -790,10 +856,24 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 	}
 	// No support for ctim/btim in KIO...
 
-	// Setting UID and GID here to UDS_USER/UDS_GROUP respectively would not lead to the expected
+	// Setting UID and GID here to UDS_USER/UDS_GROUP respectively does not lead to the expected
 	// results as those values might only be meaningful on the remote side.
-	// As access checks are only performed by the remote side, it shouldn't matter much anyway.
-	// It does mean that chmod/chown are pointless as well.
+	// As access checks are only performed by the remote side, it shouldn't matter much though.
+	// It's necessary to make chown/chmod meaningful.
+	if(entry.contains(KIO::UDSEntry::UDS_USER))
+	{
+		QString user = entry.stringValue(KIO::UDSEntry::UDS_USER);
+		auto *pw = getpwnam(user.toUtf8().data());
+		if(pw)
+			attr.st_uid = pw->pw_uid;
+	}
+	if(entry.contains(KIO::UDSEntry::UDS_GROUP))
+	{
+		QString group = entry.stringValue(KIO::UDSEntry::UDS_GROUP);
+		auto *gr = getgrnam(group.toUtf8().data());
+		if(gr)
+			attr.st_gid = gr->gr_gid;
+	}
 
 	if(entry.contains(KIO::UDSEntry::UDS_LOCAL_PATH) || entry.contains(KIO::UDSEntry::UDS_URL))
 	{
