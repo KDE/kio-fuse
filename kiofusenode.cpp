@@ -61,3 +61,11 @@ QUrl KIOFuseNode::remoteUrl(std::function<KIOFuseNode *(fuse_ino_t)> nodeAccesso
 	// No OriginNode found until the root - return an invalid URL
 	return {};
 }
+
+QUrl KIOFuseRemoteFileNode::remoteUrl(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const
+{
+	if(!m_overrideUrl.isEmpty())
+		return m_overrideUrl;
+
+	return KIOFuseNode::remoteUrl(nodeAccessor);
+}

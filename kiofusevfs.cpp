@@ -882,14 +882,26 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 		if(target.isEmpty())
 			target = QUrl(entry.stringValue(KIO::UDSEntry::UDS_URL)).toLocalFile();
 
-		if(target.isEmpty())
+		if(!target.isEmpty())
+		{
+			// Symlink to local file/folder
+			attr.st_mode |= S_IFLNK;
+			auto *ret = new KIOFuseSymLinkNode(parentIno, name, attr);
+			ret->m_target = target;
+			ret->m_stat.st_size = ret->m_target.toUtf8().length();
+			return ret;
+		}
+		else if(entry.isLink())
+			return nullptr; // Does this even happen?
+		else if(entry.isDir())
 			return nullptr; // Maybe create a mountpoint (OriginNode) here?
-
-		attr.st_mode |= S_IFLNK;
-		auto *ret = new KIOFuseSymLinkNode(parentIno, name, attr);
-		ret->m_target = target;
-		ret->m_stat.st_size = ret->m_target.toUtf8().length();
-		return ret;
+		else // Regular file pointing to URL
+		{
+			attr.st_mode |= S_IFREG;
+			auto *ret = new KIOFuseRemoteFileNode(parentIno, name, attr);
+			ret->m_overrideUrl = QUrl{entry.stringValue(KIO::UDSEntry::UDS_URL)};
+			return ret;
+		}
 	}
 	else if(entry.isLink())	// Check for link first as isDir can also be a link
 	{
@@ -913,7 +925,7 @@ KIOFuseNode *KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, cons
 
 void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t bytes, std::function<void(int error)> callback)
 {
-	if(node->m_cacheSize >= bytes)
+	if(node->m_localCache && node->m_cacheSize >= bytes)
 		return callback(0); // Already available
 	else if(node->cacheIsComplete()) // Full cache is available...
 		return callback(ESPIPE); // ...but less than requested.

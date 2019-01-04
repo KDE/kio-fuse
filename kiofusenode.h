@@ -61,7 +61,7 @@ public:
 	QString virtualPath(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
 	// Returns the url upwards until a OriginNode is hit.
 	// If no OriginNode is found, an empty QUrl is returned
-	QUrl remoteUrl(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
+	virtual QUrl remoteUrl(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
 
 	uint64_t m_lookupCount = 0;
 	fuse_ino_t m_parentIno;
@@ -144,11 +144,14 @@ public:
 	static const NodeType Type = NodeType::RemoteFileNode;
 	NodeType type() const override { return Type; }
 	// Cache information
-	bool cacheIsComplete() { return m_cacheSize == size_t(m_stat.st_size); }
+	bool cacheIsComplete() { return m_localCache && m_cacheSize == size_t(m_stat.st_size); }
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
 	size_t m_cacheSize = 0; // Size of the local cache - might be less than m_stat.st_size.
 	bool m_cacheDirty = false; // Whether the cache content/size changed locally.
 
+	// Override the URL (used for UDS_URL)
+	virtual QUrl remoteUrl(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const override;
+	QUrl m_overrideUrl;
 Q_SIGNALS:
 	// Emitted when a download operation on this node made progress, finished or failed.
 	void localCacheChanged(int error);
