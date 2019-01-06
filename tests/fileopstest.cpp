@@ -17,7 +17,7 @@ private Q_SLOTS:
 
 	void testControlFile();
 	void testLocalFileOps();
-	void testWriteOps();
+	void testCreationOps();
 	void testArchiveOps();
 
 private:
@@ -196,7 +196,7 @@ void FileOpsTest::testLocalFileOps()
 	QCOMPARE(symlink.symLinkTarget(), QDir(dataPath).filePath(QStringLiteral("symlinktarget")));
 }
 
-void FileOpsTest::testWriteOps()
+void FileOpsTest::testCreationOps()
 {
 	QTemporaryDir localDir;
 	QVERIFY(localDir.isValid());
@@ -205,9 +205,29 @@ void FileOpsTest::testWriteOps()
 	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
 
+	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QVERIFY(mirrorDir.exists());
+
 	// Create a symlink
-	QCOMPARE(symlink("target", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
+	QCOMPARE(symlink("target", mirrorDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
 	QCOMPARE(QFileInfo(localDir.filePath(QStringLiteral("symlink"))).symLinkTarget(), localDir.filePath(QStringLiteral("target")));
+
+	// Create a regular file
+	QFile newFile(mirrorDir.filePath(QStringLiteral("newFile")));
+	QVERIFY(newFile.open(QIODevice::ReadWrite));
+
+	QFile newFileLocal(localDir.filePath(QStringLiteral("newFile")));
+	QVERIFY(newFileLocal.exists());
+	QCOMPARE(newFileLocal.size(), 0);
+
+	QVERIFY(newFile.write(QStringLiteral("someweirdstring").toUtf8()));
+	QVERIFY(newFile.flush());
+	QCOMPARE(fsync(newFile.handle()), 0);
+
+	// Reopen the file (see above in testLocalFileOps)
+	newFileLocal.close();
+	QVERIFY(newFileLocal.open(QIODevice::ReadOnly));
+	QCOMPARE(newFileLocal.readAll(), QStringLiteral("someweirdstring").toUtf8());
 }
 
 void FileOpsTest::testArchiveOps()

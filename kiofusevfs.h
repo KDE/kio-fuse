@@ -50,6 +50,7 @@ private:
 	static void getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 	static void readlink(fuse_req_t req, fuse_ino_t ino);
+	static void mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
 	static void symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name);
 	static void open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,

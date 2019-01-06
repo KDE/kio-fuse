@@ -22,6 +22,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.getattr = &KIOFuseVFS::getattr,
 	.setattr = &KIOFuseVFS::setattr,
 	.readlink = &KIOFuseVFS::readlink,
+	.mknod = &KIOFuseVFS::mknod,
 	.symlink = &KIOFuseVFS::symlink,
 	.open =  &KIOFuseVFS::open,
 	.read = &KIOFuseVFS::read,
@@ -389,6 +390,63 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 	}
 
 	fuse_reply_readlink(req, node->as<KIOFuseSymLinkNode>()->m_target.toUtf8().data());
+}
+
+void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev)
+{
+	Q_UNUSED(rdev);
+
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(parent);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	KIOFuseRemoteDirNode *remote = node->as<KIOFuseRemoteDirNode>();
+	if(!remote)
+	{
+		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	// No type means regular file as well
+	if((mode & S_IFMT) != S_IFREG && (mode & S_IFMT) != 0)
+	{
+		fuse_reply_err(req, EOPNOTSUPP);
+		return;
+	}
+
+	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
+	auto *job = KIO::put(url, mode & ~S_IFMT);
+	// Not connecting to the dataReq signal at all results in an empty file
+	that->connect(job, &KIO::SimpleJob::finished, [=] {
+		if(job->error())
+		{
+			fuse_reply_err(req, EIO);
+			return;
+		}
+
+		that->mountUrl(url, [=](KIOFuseNode *node, int error) {
+			if(error)
+			{
+				fuse_reply_err(req, error);
+				return;
+			}
+
+			node->m_lookupCount++;
+
+			struct fuse_entry_param entry {};
+			entry.ino = node->m_stat.st_ino;
+			entry.attr_timeout = 1.0;
+			entry.entry_timeout = 1.0;
+			entry.attr = node->m_stat;
+
+			fuse_reply_entry(req, &entry);
+		});
+	});
 }
 
 void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name)

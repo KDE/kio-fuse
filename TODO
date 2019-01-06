@@ -2,7 +2,6 @@
   children and storing a copy of childrenInos in fuse_file_info.
 - Install own signal handlers
 - Handle more FUSE ops:
-  * mknod
   * unlink
   * rename
   * statvfs
@@ -11,7 +10,6 @@
   * interrupting requests (just killing the KIO Job would also break other requests for the
     same resource)
 - Deal with invalid size reporting slaves (http/gdrive/...)?
-- What is wrong with MOUNT gdrive://username?
 - Evaluate dynamic_cast compared to own implementation
 - Does O_APPEND need special treatment in write or is using off enough?
 - Do st_[acm]tim need to be updated manually?
