@@ -1325,7 +1325,7 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 	m_dirtyNodes.extract(node->m_stat.st_ino);
 
 	auto url = node->remoteUrl([this](auto ino) { return nodeForIno(ino); });
-	auto *job = KIO::put(url, -1, KIO::Overwrite);
+	auto *job = KIO::put(url, node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
 	job->setTotalSize(node->m_cacheSize);
 
 	size_t bytesSent = 0; // Modified inside the lambda
