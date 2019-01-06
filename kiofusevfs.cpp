@@ -22,6 +22,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.getattr = &KIOFuseVFS::getattr,
 	.setattr = &KIOFuseVFS::setattr,
 	.readlink = &KIOFuseVFS::readlink,
+	.symlink = &KIOFuseVFS::symlink,
 	.open =  &KIOFuseVFS::open,
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
@@ -350,7 +351,6 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		{
 			auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
 			auto newMode = attr->st_mode & ~S_IFMT;
-			qDebug() << newMode;
 			auto *job = KIO::chmod(url, newMode);
 			that->connect(job, &KIO::SimpleJob::finished, [=] {
 				if(job->error())
@@ -389,6 +389,53 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 	}
 
 	fuse_reply_readlink(req, node->as<KIOFuseSymLinkNode>()->m_target.toUtf8().data());
+}
+
+void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(parent);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	KIOFuseRemoteDirNode *remote = node->as<KIOFuseRemoteDirNode>();
+	if(!remote)
+	{
+		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
+	auto *job = KIO::symlink(QString::fromUtf8(link), url);
+	that->connect(job, &KIO::SimpleJob::finished, [=] {
+		if(job->error())
+		{
+			fuse_reply_err(req, EIO);
+			return;
+		}
+
+		that->mountUrl(url, [=](KIOFuseNode *node, int error) {
+			if(error)
+			{
+				fuse_reply_err(req, error);
+				return;
+			}
+
+			node->m_lookupCount++;
+
+			struct fuse_entry_param entry {};
+			entry.ino = node->m_stat.st_ino;
+			entry.attr_timeout = 1.0;
+			entry.entry_timeout = 1.0;
+			entry.attr = node->m_stat;
+
+			fuse_reply_entry(req, &entry);
+		});
+	});
 }
 
 void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
@@ -1064,6 +1111,124 @@ void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<v
 	);
 }
 
+void KIOFuseVFS::mountUrl(QUrl url, std::function<void (KIOFuseNode *, int)> callback)
+{
+	qDebug(KIOFUSE_LOG) << "Mounting url" << url;
+	auto statJob = KIO::stat(url);
+	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
+	                                            // files over plain HTTP
+	connect(statJob, &KIO::StatJob::result, [=] {
+		if(statJob->error())
+		{
+			qDebug(KIOFUSE_LOG) << statJob->errorString();
+			callback(nullptr, EIO);
+			return;
+		}
+
+		// Success - create an entry
+
+		KIOFuseNode *rootNode = m_nodes[KIOFuseIno::Root].get();
+		KIOFuseNode *protocolNode = rootNode;
+
+		// Depending on whether the URL has an "authority" component or not,
+		// the path is mapped differently:
+		// file:///home/foo -> mountpoint/file/home/foo
+		// ftp://user:pass@server/file -> mountpoint/ftp/user@server/file
+
+		QString originNodeName;
+
+		if(!url.authority().isEmpty())
+		{
+			// Authority exists -> create a ProtocolNode as intermediate
+			protocolNode = nodeByName(rootNode, url.scheme());
+			if(!protocolNode)
+			{
+				struct stat attr = {};
+				fillStatForFile(attr);
+				attr.st_mode = S_IFDIR | 0755;
+
+				protocolNode = new KIOFuseProtocolNode(KIOFuseIno::Root, url.scheme(), attr);
+				protocolNode->m_stat.st_ino = insertNode(protocolNode);
+			}
+
+			QUrl urlWithoutPassword = url;
+			urlWithoutPassword.setPassword({});
+
+			originNodeName = urlWithoutPassword.authority();
+		}
+		else
+		{
+			// No authority -> the scheme itself is used as OriginNode
+			originNodeName = url.scheme();
+		}
+
+		KIOFuseNode *originNode = nodeByName(protocolNode, originNodeName);
+		if(!originNode)
+		{
+			struct stat attr = {};
+			fillStatForFile(attr);
+			attr.st_mode = S_IFDIR | 0755;
+
+			originNode = new KIOFuseOriginNode(protocolNode->m_stat.st_ino, originNodeName, attr);
+			// Find out whether the base URL needs to start with a /
+			if(url.path().startsWith(QLatin1Char('/')))
+				(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath(QStringLiteral("/"));
+			else
+				(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath({});
+			originNode->m_stat.st_ino = insertNode(originNode);
+		}
+
+		// Create all path components as directories
+		KIOFuseNode *pathNode = originNode;
+		auto pathElements = url.path().split(QLatin1Char('/'));
+
+		// Strip empty path elements, for instance in
+		// "file:///home/foo"
+		// "ftp://dir/ectory/"
+		pathElements.removeAll({});
+
+		if(pathElements.size() == 0)
+		{
+			callback(pathNode, 0);
+			return;
+		}
+
+		for(int i = 0; pathElements.size() > 1 && i < pathElements.size() - 1; ++i)
+		{
+			if(pathElements[i].isEmpty())
+				break;
+
+			KIOFuseNode *subdirNode = nodeByName(pathNode, pathElements[i]);
+			if(!subdirNode)
+			{
+				struct stat attr = {};
+				fillStatForFile(attr);
+				attr.st_mode = S_IFDIR | 0755;
+
+				subdirNode = new KIOFuseRemoteDirNode(pathNode->m_stat.st_ino, pathElements[i], attr);
+				subdirNode->m_stat.st_ino = insertNode(subdirNode);
+			}
+
+			pathNode = subdirNode;
+		}
+
+		// Finally create the last component
+		KIOFuseNode *finalNode = nodeByName(pathNode, pathElements.last());
+		if(!finalNode)
+		{
+			// The remote name (statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME)) has to be
+			// ignored as it can be different from the path. e.g. tar:/foo.tar/ is "/"
+			finalNode = createNodeFromUDSEntry(statJob->statResult(), pathNode->m_stat.st_ino, pathElements.last());
+			if(!finalNode)
+				return callback(nullptr, EIO);
+
+			finalNode->m_stat.st_ino = insertNode(finalNode);
+		}
+
+		callback(finalNode, 0);
+	});
+}
+
 void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> callback)
 {
 	int opEnd = cmd.indexOf(QLatin1Char(' '));
@@ -1075,122 +1240,13 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 	if(op == QStringLiteral("MOUNT"))
 	{
 		QUrl url = QUrl{cmd.midRef(opEnd + 1).trimmed().toString()};
-		if(!url.isValid())
+		if(url.isValid())
+			return mountUrl(url, [=](KIOFuseNode *node, int error) {
+				Q_UNUSED(node);
+				callback(error ? EINVAL : 0);
+			});
+		else
 			return callback(EINVAL);
-
-		auto statJob = KIO::stat(url);
-		statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
-		                                            // files over plain HTTP
-		connect(statJob, &KIO::StatJob::result, [=] {
-			if(statJob->error())
-			{
-				qDebug(KIOFUSE_LOG) << statJob->errorString();
-				callback(EINVAL);
-				return;
-			}
-
-			// Success - create an entry
-
-			KIOFuseNode *rootNode = m_nodes[KIOFuseIno::Root].get();
-			KIOFuseNode *protocolNode = rootNode;
-
-			// Depending on whether the URL has an "authority" component or not,
-			// the path is mapped differently:
-			// file:///home/foo -> mountpoint/file/home/foo
-			// ftp://user:pass@server/file -> mountpoint/ftp/user@server/file
-
-			QString originNodeName;
-
-			if(!url.authority().isEmpty())
-			{
-				// Authority exists -> create a ProtocolNode as intermediate
-				protocolNode = nodeByName(rootNode, url.scheme());
-				if(!protocolNode)
-				{
-					struct stat attr = {};
-					fillStatForFile(attr);
-					attr.st_mode = S_IFDIR | 0755;
-
-					protocolNode = new KIOFuseProtocolNode(KIOFuseIno::Root, url.scheme(), attr);
-					protocolNode->m_stat.st_ino = insertNode(protocolNode);
-				}
-
-				QUrl urlWithoutPassword = url;
-				urlWithoutPassword.setPassword({});
-
-				originNodeName = urlWithoutPassword.authority();
-			}
-			else
-			{
-				// No authority -> the scheme itself is used as OriginNode
-				originNodeName = url.scheme();
-			}
-
-			KIOFuseNode *originNode = nodeByName(protocolNode, originNodeName);
-			if(!originNode)
-			{
-				struct stat attr = {};
-				fillStatForFile(attr);
-				attr.st_mode = S_IFDIR | 0755;
-
-				originNode = new KIOFuseOriginNode(protocolNode->m_stat.st_ino, originNodeName, attr);
-				// Find out whether the base URL needs to start with a /
-				if(url.path().startsWith(QLatin1Char('/')))
-					(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath(QStringLiteral("/"));
-				else
-					(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath({});
-				originNode->m_stat.st_ino = insertNode(originNode);
-			}
-
-			// Create all path components as directories
-			KIOFuseNode *pathNode = originNode;
-			auto pathElements = url.path().split(QLatin1Char('/'));
-
-			// Strip empty path elements, for instance in
-			// "file:///home/foo"
-			// "ftp://dir/ectory/"
-			pathElements.removeAll({});
-
-			if(pathElements.size() == 0)
-			{
-				callback(0);
-				return;
-			}
-
-			for(int i = 0; pathElements.size() > 1 && i < pathElements.size() - 1; ++i)
-			{
-				if(pathElements[i].isEmpty())
-					break;
-
-				KIOFuseNode *subdirNode = nodeByName(pathNode, pathElements[i]);
-				if(!subdirNode)
-				{
-					struct stat attr = {};
-					fillStatForFile(attr);
-					attr.st_mode = S_IFDIR | 0755;
-
-					subdirNode = new KIOFuseRemoteDirNode(pathNode->m_stat.st_ino, pathElements[i], attr);
-					subdirNode->m_stat.st_ino = insertNode(subdirNode);
-				}
-
-				pathNode = subdirNode;
-			}
-
-			// Finally create the last component
-			KIOFuseNode *finalNode = nodeByName(pathNode, pathElements.last());
-			if(!finalNode)
-			{
-				// The remote name (statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME)) has to be
-				// ignored as it can be different from the path. e.g. tar:/foo.tar/ is "/"
-				finalNode = createNodeFromUDSEntry(statJob->statResult(), pathNode->m_stat.st_ino, pathElements.last());
-				if(!finalNode)
-					return callback(EIO);
-
-				finalNode->m_stat.st_ino = insertNode(finalNode);
-			}
-
-			callback(0);
-		});
 	}
 	else
 	{

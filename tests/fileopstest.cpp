@@ -17,6 +17,7 @@ private Q_SLOTS:
 
 	void testControlFile();
 	void testLocalFileOps();
+	void testWriteOps();
 	void testArchiveOps();
 
 private:
@@ -193,6 +194,20 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(symlink.open(QIODevice::ReadOnly));
 	QCOMPARE(symlink.readAll(), QStringLiteral("symlinktargetcontent").toUtf8());
 	QCOMPARE(symlink.symLinkTarget(), QDir(dataPath).filePath(QStringLiteral("symlinktarget")));
+}
+
+void FileOpsTest::testWriteOps()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	// Create a symlink
+	QCOMPARE(symlink("target", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
+	QCOMPARE(QFileInfo(localDir.filePath(QStringLiteral("symlink"))).symLinkTarget(), localDir.filePath(QStringLiteral("target")));
 }
 
 void FileOpsTest::testArchiveOps()

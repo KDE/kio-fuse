@@ -8,6 +8,8 @@
   * statvfs
   * setattr with modification time
   * ACLs (?)
+  * interrupting requests (just killing the KIO Job would also break other requests for the
+    same resource)
 - Deal with invalid size reporting slaves (http/gdrive/...)?
 - What is wrong with MOUNT gdrive://username?
 - Evaluate dynamic_cast compared to own implementation
@@ -21,4 +23,3 @@
 - Look into using KIO::read/KIO::write if possible:
   * Needs ::open to succeed, has state per slave (?)
   * Does not support truncation, so ::put is still necessary
-- Handle INTERRUPTs by mapping fuse reqs to KIO Jobs

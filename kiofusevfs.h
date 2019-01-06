@@ -50,6 +50,7 @@ private:
 	static void getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 	static void readlink(fuse_req_t req, fuse_ino_t ino);
+	static void symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name);
 	static void open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                    struct fuse_file_info *fi);
@@ -78,6 +79,8 @@ private:
 	void waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t bytes, std::function<void(int error)> callback);
 	// Invokes callback on error or when all children nodes are available
 	void waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<void(int error)> callback);
+	// Runs KIO::stat on url and adds a node to the tree if successful. Calls the callback at the end.
+	void mountUrl(QUrl url, std::function<void(KIOFuseNode *node, int error)> callback);
 	// Handle the _control command in cmd asynchronously and call callback upon completion or failure.
 	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
 	// If the cache is dirty, writes the local cache to the remote. Callback is called on success, failure
