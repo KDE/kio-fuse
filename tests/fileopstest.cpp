@@ -18,6 +18,7 @@ private Q_SLOTS:
 	void testControlFile();
 	void testLocalFileOps();
 	void testCreationOps();
+	void testRenameOps();
 	void testArchiveOps();
 
 private:
@@ -228,6 +229,79 @@ void FileOpsTest::testCreationOps()
 	newFileLocal.close();
 	QVERIFY(newFileLocal.open(QIODevice::ReadOnly));
 	QCOMPARE(newFileLocal.readAll(), QStringLiteral("someweirdstring").toUtf8());
+}
+
+void FileOpsTest::testRenameOps()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QVERIFY(mirrorDir.exists());
+
+	// Create a directory
+	QVERIFY(QDir(localDir.path()).mkdir(QStringLiteral("dira")));
+	QDir dir(mirrorDir.filePath(QStringLiteral("dira")));
+
+	// And a file inside
+	QFile file(dir.filePath(QStringLiteral("filea")));
+	QVERIFY(file.open(QIODevice::ReadWrite));
+	QVERIFY(file.write(QStringLiteral("someweirdstring").toUtf8()));
+
+	// Note: QFile::rename copies and unlinks if the rename syscall fails,
+	// so use the libc function directly
+
+	// Rename the file
+	QCOMPARE(rename(dir.filePath(QStringLiteral("filea")).toUtf8().data(),
+	                dir.filePath(QStringLiteral("fileb")).toUtf8().data()), 0);
+	QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("filea"))));
+	QVERIFY(QFile::exists(dir.filePath(QStringLiteral("fileb"))));
+	QVERIFY(!QFile::exists(localDir.filePath(QStringLiteral("dira/filea"))));
+	QVERIFY(QFile::exists(localDir.filePath(QStringLiteral("dira/fileb"))));
+
+	// Rename the directory
+	QCOMPARE(rename(mirrorDir.filePath(QStringLiteral("dira")).toUtf8().data(),
+	                mirrorDir.filePath(QStringLiteral("dirb")).toUtf8().data()), 0);
+	QVERIFY(!QFile::exists(mirrorDir.filePath(QStringLiteral("dira"))));
+	QVERIFY(QFile::exists(mirrorDir.filePath(QStringLiteral("dirb"))));
+	QVERIFY(!QFile::exists(mirrorDir.filePath(QStringLiteral("dira"))));
+	QVERIFY(QFile::exists(mirrorDir.filePath(QStringLiteral("dirb"))));
+	QVERIFY(!QFile::exists(mirrorDir.filePath(QStringLiteral("dirb/filea"))));
+	QVERIFY(QFile::exists(mirrorDir.filePath(QStringLiteral("dirb/fileb"))));
+
+	// Verify that the file is still open and "connected"
+	QVERIFY(file.write(QStringLiteral("!").toUtf8()));
+	QVERIFY(file.flush());
+	QCOMPARE(fsync(file.handle()), 0);
+	QFile localFile(localDir.filePath(QStringLiteral("dirb/fileb")));
+	QVERIFY(localFile.open(QIODevice::ReadOnly));
+	QCOMPARE(localFile.readAll(), QStringLiteral("someweirdstring!").toUtf8());
+
+	// Try the same, but overwriting an existing file
+	QFile overwrittenFile(mirrorDir.filePath(QStringLiteral("dirb/filec")));
+	QVERIFY(overwrittenFile.open(QIODevice::ReadWrite));
+	QCOMPARE(overwrittenFile.write(QStringLiteral("data").toUtf8()), 4);
+	QVERIFY(overwrittenFile.flush());
+	QCOMPARE(rename(mirrorDir.filePath(QStringLiteral("dirb/fileb")).toUtf8().data(),
+	                mirrorDir.filePath(QStringLiteral("dirb/filec")).toUtf8().data()), 0);
+
+	QVERIFY(!QFile::exists(localDir.filePath(QStringLiteral("dirb/fileb"))));
+	QVERIFY(QFile::exists(localDir.filePath(QStringLiteral("dirb/filec"))));
+	QVERIFY(!QFile::exists(mirrorDir.filePath(QStringLiteral("dirb/fileb"))));
+	QVERIFY(QFile::exists(mirrorDir.filePath(QStringLiteral("dirb/filec"))));
+
+	// Both handles must still be valid
+	QVERIFY(overwrittenFile.seek(0));
+	QCOMPARE(overwrittenFile.readAll(), QStringLiteral("data").toUtf8());
+
+	localFile.close();
+	localFile.setFileName(localDir.filePath(QStringLiteral("dirb/filec")));
+	QVERIFY(localFile.open(QIODevice::ReadOnly));
+	QCOMPARE(localFile.readAll(), QStringLiteral("someweirdstring!").toUtf8());
 }
 
 void FileOpsTest::testArchiveOps()

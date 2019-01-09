@@ -52,6 +52,8 @@ private:
 	static void readlink(fuse_req_t req, fuse_ino_t ino);
 	static void mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
 	static void symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name);
+	static void rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent,
+	                   const char *newname, unsigned int flags);
 	static void open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                    struct fuse_file_info *fi);
@@ -67,10 +69,17 @@ private:
 	KIOFuseNode* nodeByName(const KIOFuseNode *parent, const QString name);
 	// Returns nullptr if not found. Ownership remains at m_nodes.
 	KIOFuseNode* nodeForIno(const fuse_ino_t ino);
+	// Removes the node from the old parent's children list (if it has a parent) and adds it to the new parent.
+	void reparentNode(KIOFuseNode *node, fuse_ino_t newParentIno);
 	// Takes ownership of the pointer
 	fuse_ino_t insertNode(KIOFuseNode *node);
 	// Fills a (previously zeroed out) struct stat with minimal information
 	void fillStatForFile(struct stat &attr);
+	// Adjusts the lookup count and deletes the node if it is now zero and a child of DeletedRoot.
+	void incrementLookupCount(KIOFuseNode *node, uint64_t delta=1);
+	void decrementLookupCount(KIOFuseNode *node, uint64_t delta=1);
+	// Depending on the lookup count, it makes the node a child of DeletedRoot or deletes it directly.
+	void markNodeDeleted(KIOFuseNode *node);
 	// Sends the struct attr to fuse
 	static void replyAttr(fuse_req_t req, KIOFuseNode *node);
 	// Creates a new node on the heap with the matching type and fills m_stat fields.

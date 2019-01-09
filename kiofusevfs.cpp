@@ -1,5 +1,6 @@
-#include <unistd.h>
+#include <linux/fs.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include <QDebug>
 
@@ -24,6 +25,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.readlink = &KIOFuseVFS::readlink,
 	.mknod = &KIOFuseVFS::mknod,
 	.symlink = &KIOFuseVFS::symlink,
+	.rename = &KIOFuseVFS::rename,
 	.open =  &KIOFuseVFS::open,
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
@@ -436,7 +438,7 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 				return;
 			}
 
-			node->m_lookupCount++;
+			that->incrementLookupCount(node);
 
 			struct fuse_entry_param entry {};
 			entry.ino = node->m_stat.st_ino;
@@ -483,7 +485,7 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 				return;
 			}
 
-			node->m_lookupCount++;
+			that->incrementLookupCount(node);
 
 			struct fuse_entry_param entry {};
 			entry.ino = node->m_stat.st_ino;
@@ -493,6 +495,86 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 
 			fuse_reply_entry(req, &entry);
 		});
+	});
+}
+
+void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent, const char *newname, unsigned int flags)
+{
+	if(flags & ~(RENAME_NOREPLACE))
+	{
+		// RENAME_EXCHANGE could be emulated locally, but not with the same guarantees
+		fuse_reply_err(req, EOPNOTSUPP);
+		return;
+	}
+
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *parentNode = that->nodeForIno(parent),
+	            *newParentNode = that->nodeForIno(newparent);
+	if(!parentNode || !newParentNode)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	KIOFuseRemoteDirNode *remoteParent = parentNode->as<KIOFuseRemoteDirNode>(),
+	                     *remoteNewParent = newParentNode->as<KIOFuseRemoteDirNode>();
+	if(!remoteParent || !remoteNewParent)
+	{
+		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	KIOFuseNode *node = that->nodeByName(remoteParent, QString::fromUtf8(name));
+	if(!node)
+	{
+		fuse_reply_err(req, ENOENT);
+		return;
+	}
+
+	QString newNameStr = QString::fromUtf8(newname);
+
+	KIOFuseNode *replacedNode = that->nodeByName(remoteNewParent, newNameStr);
+
+	// Ensure that if node is a directory, replacedNode either does not exist or is an empty directory.
+	if(node->as<KIOFuseDirNode>() != nullptr && replacedNode)
+	{
+		auto *replacedDir = replacedNode->as<KIOFuseDirNode>();
+		if(!replacedDir)
+		{
+			fuse_reply_err(req, ENOTDIR);
+			return;
+		}
+		if(replacedDir && replacedDir->m_childrenInos.size() != 0)
+		{
+			fuse_reply_err(req, ENOTEMPTY);
+			return;
+		}
+	}
+
+	auto url = remoteParent->remoteUrl([that](auto ino) { return that->nodeForIno(ino); }),
+	     newUrl = remoteNewParent->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
+	newUrl.setPath(newUrl.path() + QLatin1Char('/') + newNameStr);
+
+	// Make sure the new parent won't get deleted in between
+	that->incrementLookupCount(newParentNode);
+
+	auto *job = KIO::rename(url, newUrl, (flags & RENAME_NOREPLACE) ? KIO::DefaultFlags : KIO::Overwrite);
+	that->connect(job, &KIO::SimpleJob::finished, [=] {
+		if(job->error())
+			fuse_reply_err(req, EIO);
+		else
+		{
+			if(replacedNode)
+				that->markNodeDeleted(replacedNode);
+
+			that->reparentNode(node, newParentNode->m_stat.st_ino);
+			node->m_nodeName = newNameStr;
+
+			fuse_reply_err(req, 0);
+		}
+
+		that->decrementLookupCount(newParentNode);
 	});
 }
 
@@ -761,7 +843,7 @@ void KIOFuseVFS::flush(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 	// do writeback here. I can't think of a better alternative though -
 	// doing it only on fsync and the final forget seems like a bit too late.
 
-	return fsync(req, ino, 1, fi);
+	return KIOFuseVFS::fsync(req, ino, 1, fi);
 }
 
 void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_info *fi)
@@ -826,7 +908,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	if(auto child = that->nodeByName(parentNode, nodeName))
 	{
 		// Found
-		child->m_lookupCount++;
+		that->incrementLookupCount(child);
 
 		struct fuse_entry_param entry {};
 		entry.ino = child->m_stat.st_ino;
@@ -852,7 +934,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		if(auto child = that->nodeByName(parentNode, nodeName))
 		{
 			// Found
-			child->m_lookupCount++;
+			that->incrementLookupCount(child);
 
 			entry.ino = child->m_stat.st_ino;
 			entry.attr_timeout = 1.0;
@@ -869,7 +951,7 @@ void KIOFuseVFS::forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	KIOFuseNode *node = that->nodeForIno(ino);
 	if(node)
-		node->m_lookupCount -= nlookup;
+		that->decrementLookupCount(node, nlookup);
 
 	fuse_reply_none(req);
 }
@@ -881,6 +963,37 @@ KIOFuseNode *KIOFuseVFS::nodeForIno(const fuse_ino_t ino)
 		return nullptr;
 
 	return it->second.get();
+}
+
+void KIOFuseVFS::reparentNode(KIOFuseNode *node, fuse_ino_t newParentIno)
+{
+	if(node->m_parentIno == newParentIno)
+		return;
+
+	if(node->m_parentIno != KIOFuseIno::Invalid)
+	{
+		// Remove from old parent's children list
+		auto parentNodeIt = m_nodes.find(node->m_parentIno);
+		if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
+		{
+			auto &childrenList = parentNodeIt->second.get()->as<KIOFuseDirNode>()->m_childrenInos;
+			std::remove(begin(childrenList), end(childrenList), node->m_stat.st_ino);
+		}
+		else
+			qWarning(KIOFUSE_LOG) << "Tried to reparent node with invalid parent";
+	}
+
+	node->m_parentIno = newParentIno;
+
+	if(node->m_parentIno != KIOFuseIno::Invalid)
+	{
+		// Add to new parent's children list
+		auto parentNodeIt = m_nodes.find(node->m_parentIno);
+		if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
+			parentNodeIt->second.get()->as<KIOFuseDirNode>()->m_childrenInos.push_back(node->m_stat.st_ino);
+		else
+			qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
+	}
 }
 
 fuse_ino_t KIOFuseVFS::insertNode(KIOFuseNode *node)
@@ -924,6 +1037,36 @@ void KIOFuseVFS::fillStatForFile(struct stat &attr)
 	clock_gettime(CLOCK_REALTIME, &attr.st_atim);
 	attr.st_mtim = attr.st_atim;
 	attr.st_ctim = attr.st_atim;
+}
+
+void KIOFuseVFS::incrementLookupCount(KIOFuseNode *node, uint64_t delta)
+{
+	if(node->m_lookupCount + delta < node->m_lookupCount)
+		qWarning(KIOFUSE_LOG) << "Lookup count overflow!";
+	else
+		node->m_lookupCount += delta;
+}
+
+void KIOFuseVFS::decrementLookupCount(KIOFuseNode *node, uint64_t delta)
+{
+	if(node->m_lookupCount < delta)
+		qWarning(KIOFUSE_LOG) << "Tried to set lookup count negative!";
+	else
+		node->m_lookupCount -= delta;
+
+	if(node->m_parentIno == KIOFuseIno::DeletedRoot && node->m_lookupCount == 0)
+	{
+		// Delete the node
+		m_dirtyNodes.extract(node->m_stat.st_ino);
+		reparentNode(node, KIOFuseIno::DeletedRoot);
+		m_nodes[node->m_stat.st_ino].reset();
+	}
+}
+
+void KIOFuseVFS::markNodeDeleted(KIOFuseNode *node)
+{	
+	reparentNode(node, KIOFuseIno::DeletedRoot);
+	decrementLookupCount(node, 0); // Trigger reevaluation
 }
 
 void KIOFuseVFS::replyAttr(fuse_req_t req, KIOFuseNode *node)
@@ -1317,6 +1460,13 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 {
 	if(!node->m_cacheDirty)
 		return callback(0);
+
+	if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+	{
+		// Important: This is before marking it as flushed as it can be linked back.
+		qDebug(KIOFUSE_LOG) << "Not flushing unlinked node" << node->m_nodeName;
+		return callback(0);
+	}
 
 	qDebug(KIOFUSE_LOG) << "Flushing node" << node->m_nodeName;
 
