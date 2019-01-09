@@ -5,6 +5,7 @@
 #include <QDebug>
 
 #include <KIO/ListJob>
+#include <KIO/MkdirJob>
 #include <KIO/StatJob>
 #include <KIO/TransferJob>
 
@@ -24,6 +25,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.setattr = &KIOFuseVFS::setattr,
 	.readlink = &KIOFuseVFS::readlink,
 	.mknod = &KIOFuseVFS::mknod,
+	.mkdir = &KIOFuseVFS::mkdir,
 	.symlink = &KIOFuseVFS::symlink,
 	.rename = &KIOFuseVFS::rename,
 	.open =  &KIOFuseVFS::open,
@@ -424,6 +426,53 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
 	auto *job = KIO::put(url, mode & ~S_IFMT);
 	// Not connecting to the dataReq signal at all results in an empty file
+	that->connect(job, &KIO::SimpleJob::finished, [=] {
+		if(job->error())
+		{
+			fuse_reply_err(req, EIO);
+			return;
+		}
+
+		that->mountUrl(url, [=](KIOFuseNode *node, int error) {
+			if(error)
+			{
+				fuse_reply_err(req, error);
+				return;
+			}
+
+			that->incrementLookupCount(node);
+
+			struct fuse_entry_param entry {};
+			entry.ino = node->m_stat.st_ino;
+			entry.attr_timeout = 1.0;
+			entry.entry_timeout = 1.0;
+			entry.attr = node->m_stat;
+
+			fuse_reply_entry(req, &entry);
+		});
+	});
+}
+
+void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *node = that->nodeForIno(parent);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	KIOFuseRemoteDirNode *remote = node->as<KIOFuseRemoteDirNode>();
+	if(!remote)
+	{
+		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
+	auto *job = KIO::mkdir(url, mode & ~S_IFMT);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
 		{

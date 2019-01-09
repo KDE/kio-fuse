@@ -244,7 +244,7 @@ void FileOpsTest::testRenameOps()
 	QVERIFY(mirrorDir.exists());
 
 	// Create a directory
-	QVERIFY(QDir(localDir.path()).mkdir(QStringLiteral("dira")));
+	QVERIFY(QDir(mirrorDir.path()).mkdir(QStringLiteral("dira")));
 	QDir dir(mirrorDir.filePath(QStringLiteral("dira")));
 
 	// And a file inside

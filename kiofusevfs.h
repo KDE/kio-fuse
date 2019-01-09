@@ -51,6 +51,7 @@ private:
 	static void setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi);
 	static void readlink(fuse_req_t req, fuse_ino_t ino);
 	static void mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev);
+	static void mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode);
 	static void symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name);
 	static void rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent,
 	                   const char *newname, unsigned int flags);
