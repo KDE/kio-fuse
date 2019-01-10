@@ -8,6 +8,7 @@
 #include <KIO/MkdirJob>
 #include <KIO/StatJob>
 #include <KIO/TransferJob>
+#include <KIO/DeleteJob>
 
 #include "debug.h"
 #include "kiofusevfs.h"
@@ -26,6 +27,8 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.readlink = &KIOFuseVFS::readlink,
 	.mknod = &KIOFuseVFS::mknod,
 	.mkdir = &KIOFuseVFS::mkdir,
+	.unlink = &KIOFuseVFS::unlink,
+	.rmdir = &KIOFuseVFS::rmdir,
 	.symlink = &KIOFuseVFS::symlink,
 	.rename = &KIOFuseVFS::rename,
 	.open =  &KIOFuseVFS::open,
@@ -80,6 +83,10 @@ KIOFuseVFS::KIOFuseVFS(QObject *parent)
 
 	auto root = std::make_unique<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
 	root->m_stat.st_ino = KIOFuseIno::Root;
+
+	auto deletedRoot = std::make_unique<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
+	deletedRoot->m_stat.st_ino = KIOFuseIno::DeletedRoot;
+	m_nodes[KIOFuseIno::DeletedRoot] = std::move(deletedRoot);
 
 	auto control = std::make_unique<KIOFuseControlNode>(KIOFuseIno::Root, QStringLiteral("_control"), attr);
 	control->m_stat.st_ino = KIOFuseIno::Control;
@@ -498,6 +505,74 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 			fuse_reply_entry(req, &entry);
 		});
 	});
+}
+
+void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *name, bool isDirectory)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseNode *parentNode = that->nodeForIno(parent);
+	if(!parentNode)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	// Make sure the to-be deleted node is in a remote dir
+	if(!parentNode->as<KIOFuseRemoteDirNode>())
+	{
+		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	KIOFuseNode *node = that->nodeByName(parentNode, QString::fromUtf8(name));
+	if(!node)
+	{
+		fuse_reply_err(req, ENOENT);
+		return;
+	}
+
+	auto *dirNode = node->as<KIOFuseDirNode>();
+
+	if(!isDirectory && dirNode != nullptr)
+	{
+		fuse_reply_err(req, EISDIR);
+		return;
+	}
+
+	if(isDirectory && dirNode == nullptr)
+	{
+		fuse_reply_err(req, ENOTDIR);
+		return;
+	}
+	else if(dirNode	&& dirNode->m_childrenInos.size() != 0)
+	{
+		// If node is a dir, it must be empty
+		fuse_reply_err(req, ENOTEMPTY);
+		return;
+	}
+
+	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	auto *job = KIO::del(url);
+	that->connect(job, &KIO::SimpleJob::finished, [=] {
+		if(job->error())
+		{
+			fuse_reply_err(req, EIO);
+			return;
+		}
+
+		that->markNodeDeleted(node);
+		fuse_reply_err(req, 0);
+	});
+}
+
+void KIOFuseVFS::unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
+{
+	unlinkHelper(req, parent, name, false);
+}
+
+void KIOFuseVFS::rmdir(fuse_req_t req, fuse_ino_t parent, const char *name)
+{
+	unlinkHelper(req, parent, name, true);
 }
 
 void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name)
@@ -1026,7 +1101,11 @@ void KIOFuseVFS::reparentNode(KIOFuseNode *node, fuse_ino_t newParentIno)
 		if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
 		{
 			auto &childrenList = parentNodeIt->second.get()->as<KIOFuseDirNode>()->m_childrenInos;
-			std::remove(begin(childrenList), end(childrenList), node->m_stat.st_ino);
+			auto it = std::find(begin(childrenList), end(childrenList), node->m_stat.st_ino);
+			if(it != childrenList.end())
+				childrenList.erase(it);
+			else
+				qWarning(KIOFUSE_LOG) << "Tried to reparent node with broken parent link";
 		}
 		else
 			qWarning(KIOFUSE_LOG) << "Tried to reparent node with invalid parent";

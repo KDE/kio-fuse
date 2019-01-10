@@ -3,7 +3,6 @@
 - Install own signal handlers
 - Handle more FUSE ops:
   * link (to allow relinking of deleted nodes only, like O_TMPFILE)
-  * unlink
   * statvfs
   * setattr with modification time
   * ACLs (?)

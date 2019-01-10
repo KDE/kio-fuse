@@ -19,6 +19,7 @@ private Q_SLOTS:
 	void testLocalFileOps();
 	void testCreationOps();
 	void testRenameOps();
+	void testDeletionOps();
 	void testArchiveOps();
 
 private:
@@ -302,6 +303,60 @@ void FileOpsTest::testRenameOps()
 	localFile.setFileName(localDir.filePath(QStringLiteral("dirb/filec")));
 	QVERIFY(localFile.open(QIODevice::ReadOnly));
 	QCOMPARE(localFile.readAll(), QStringLiteral("someweirdstring!").toUtf8());
+}
+
+void FileOpsTest::testDeletionOps()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QVERIFY(mirrorDir.exists());
+
+	// Create a directory
+	QVERIFY(QDir(mirrorDir.path()).mkdir(QStringLiteral("dir")));
+	QDir dir(mirrorDir.filePath(QStringLiteral("dir")));
+
+	// And a file inside
+	QFile file(dir.filePath(QStringLiteral("file")));
+	QVERIFY(file.open(QIODevice::ReadWrite));
+	QVERIFY(file.write(QStringLiteral("someweirdstring").toUtf8()));
+	QVERIFY(file.flush());
+
+	// Try to delete the directory
+	QCOMPARE(unlink(dir.path().toUtf8().data()), -1);
+	QCOMPARE(errno, EISDIR);
+	QCOMPARE(rmdir(dir.path().toUtf8().data()), -1);
+	QCOMPARE(errno, ENOTEMPTY);
+
+	// Delete the file
+	QCOMPARE(rmdir(file.fileName().toUtf8().data()), -1);
+	QCOMPARE(errno, ENOTDIR);
+	QCOMPARE(unlink(file.fileName().toUtf8().data()), 0);
+	QVERIFY(!file.exists());
+	QVERIFY(!QFile::exists(localDir.filePath(QStringLiteral("dir/file"))));
+
+	// Make sure it's still open
+	QVERIFY(file.seek(0));
+	QCOMPARE(file.readAll(), QStringLiteral("someweirdstring").toUtf8());
+
+	// Delete the now empty directory
+	QCOMPARE(rmdir(dir.path().toUtf8().data()), 0);
+	QVERIFY(!dir.exists());
+	QVERIFY(!QFile::exists(localDir.filePath(QStringLiteral("dir"))));
+
+	// Make sure the file is still open
+	QVERIFY(file.seek(0));
+	QCOMPARE(file.readAll(), QStringLiteral("someweirdstring").toUtf8());
+
+	// Not implemented: Link the file back into the tree, if possible
+	// QCOMPARE(link(QStringLiteral("/proc/self/fd/%1").arg(file.handle()).toUtf8().data(),
+	//              mirrorDir.filePath(QStringLiteral("deletedFile")).toUtf8().data()), 0);
+	// ... test that the file is still open and connected.
 }
 
 void FileOpsTest::testArchiveOps()
