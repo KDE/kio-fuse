@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <QDateTime>
 #include <QDebug>
 
 #include <KIO/ListJob>
@@ -242,14 +243,35 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 	{
 		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
 		if(to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
-		              | FUSE_SET_ATTR_MODE)) // Unsupported operation requested?
+		              | FUSE_SET_ATTR_MODE
+		              | FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW
+		              | FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW)) // Unsupported operation requested?
 		{
 			// Don't do anything
 			fuse_reply_err(req, EOPNOTSUPP);
 			return;
 		}
 
+		// To have equal atim and mtim
+		struct timespec tsNow;
+		clock_gettime(CLOCK_REALTIME, &tsNow);
+
 		// Can anything be done directly?
+
+		// This is a hack: Access time is not actually passed through to KIO.
+		// For the specific case that ATIME_NOW is set (touch/futimensat(, NULL) do that),
+		// it's modified in the local cache only.
+		if(to_set & (FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW))
+		{
+			if(!(to_set & (FUSE_SET_ATTR_ATIME_NOW)))
+			{
+			   fuse_reply_err(req, EOPNOTSUPP);
+			   return;
+			}
+
+			remoteNode->m_stat.st_atim = attr->st_atim = tsNow;
+			to_set &= ~(FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW);
+		}
 
 		if(to_set & FUSE_SET_ATTR_SIZE)
 		{
@@ -371,6 +393,32 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 					remoteNode->m_stat.st_mode = (remoteNode->m_stat.st_mode & S_IFMT) | newMode;
 
 				sharedState->to_set_remaining &= ~FUSE_SET_ATTR_MODE;
+				if(!sharedState->to_set_remaining)
+				{
+					if(sharedState->error)
+						fuse_reply_err(req, sharedState->error);
+					else
+						replyAttr(req, remoteNode);
+				}
+			});
+		}
+
+		if(to_set & (FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW))
+		{
+			auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+			if(to_set & FUSE_SET_ATTR_MTIME_NOW)
+				sharedState->value.st_mtim = tsNow;
+
+			auto time = QDateTime::fromMSecsSinceEpoch(sharedState->value.st_mtim.tv_sec * 1000
+			                                           + sharedState->value.st_mtim.tv_nsec / 1000000);
+			auto *job = KIO::setModificationTime(url, time);
+			that->connect(job, &KIO::SimpleJob::finished, [=] {
+				if(job->error())
+					sharedState->error = EIO;
+				else // This is not quite correct, as KIO rounded the value down to a second
+					remoteNode->m_stat.st_mtim = sharedState->value.st_mtim;
+
+				sharedState->to_set_remaining &= ~(FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW);
 				if(!sharedState->to_set_remaining)
 				{
 					if(sharedState->error)

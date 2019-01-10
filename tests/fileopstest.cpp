@@ -1,11 +1,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <QTest>
 #include <QProcess>
-
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QTest>
+#include <QThread>
 
 class FileOpsTest : public QObject
 {
@@ -103,6 +104,22 @@ void FileOpsTest::testLocalFileOps()
 	// KIO does not expose times with sub-second precision
 	QCOMPARE(mirroredFileInfo.lastModified(), roundDownToSecond(localFileInfo.lastModified()));
 	QCOMPARE(mirroredFileInfo.lastRead(), roundDownToSecond(localFileInfo.lastRead()));
+
+	// Test touching the file
+	QDateTime oldModified = localFileInfo.lastModified(),
+	          oldAccessed = localFileInfo.lastRead();
+
+	// KIO only supports 1s resolution :-/
+	QThread::sleep(1);
+
+	QCOMPARE(futimens(mirroredFile.handle(), NULL), 0);
+	localFileInfo.refresh();
+	mirroredFileInfo.refresh();
+	QVERIFY(oldModified < localFileInfo.lastModified());
+	QCOMPARE(localFileInfo.lastModified(), roundDownToSecond(mirroredFileInfo.lastModified()));
+	// Access time not supported on the remote side, so only check in the mirror
+	QVERIFY(oldAccessed < mirroredFileInfo.lastRead());
+	//QVERIFY(oldAccessed < localFileInfo.lastRead());
 
 	// Compare the content
 	QVERIFY(localFile.seek(0));
