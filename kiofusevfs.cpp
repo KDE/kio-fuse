@@ -21,6 +21,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
+	.init = &KIOFuseVFS::init,
 	.lookup = &KIOFuseVFS::lookup,
 	.forget = &KIOFuseVFS::forget,
 	.getattr = &KIOFuseVFS::getattr,
@@ -207,6 +208,16 @@ void KIOFuseVFS::fuseRequestPending()
 
 		fuse_session_process_buf(m_fuseSession, &fbuf);
 	}
+}
+
+void KIOFuseVFS::init(void *userdata, fuse_conn_info *conn)
+{
+	Q_UNUSED(userdata);
+
+	conn->want &= ~FUSE_CAP_HANDLE_KILLPRIV; // Don't care about resetting setuid/setgid flags
+	// This should ideally be enabled, but it breaks writing to _control.
+	conn->want &= ~FUSE_CAP_WRITEBACK_CACHE;
+	conn->time_gran = 1000000000; // Only second resolution for mtime
 }
 
 void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
@@ -1238,10 +1249,10 @@ void KIOFuseVFS::fillStatForFile(struct stat &attr)
 	attr.st_mode = S_IFREG | 0755;
 	attr.st_uid = uid;
 	attr.st_gid = gid;
-	attr.st_size = 1;
+	attr.st_size = 0;
 	attr.st_blksize = 512;
 	// This is set to match st_size by replyAttr
-	attr.st_blocks = 1;
+	attr.st_blocks = 0;
 
 	clock_gettime(CLOCK_REALTIME, &attr.st_atim);
 	attr.st_mtim = attr.st_atim;

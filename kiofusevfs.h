@@ -45,6 +45,7 @@ public Q_SLOTS:
 
 private:
 	// Functions used by fuse_lowlevel_ops
+	static void init(void *userdata, struct fuse_conn_info *conn);
 	static void lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
 	static void forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);
 	static void getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);

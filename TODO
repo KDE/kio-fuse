@@ -2,14 +2,13 @@
   children and storing a copy of childrenInos in fuse_file_info.
 - Install own signal handlers
 - Handle more FUSE ops:
+  * setattr on directories
   * link (to allow relinking of deleted nodes only, like O_TMPFILE)
-  * statvfs
+  * statvfs (?)
   * ACLs (?)
   * interrupting requests (just killing the KIO Job would also break other requests for the
     same resource)
 - Deal with invalid size reporting slaves (http/gdrive/...)?
-- Does O_APPEND need special treatment in write or is using off enough?
-- Do st_[acm]tim need to be updated manually?
 - Fix kdeconnect:// to return all children in readdir and not just an incomplete list of broken
   links (or add a workaround?)
 - Refresh attributes of files/dirs and children of dirs after a while
@@ -19,3 +18,6 @@
   * Needs ::open to succeed, has state per slave (?)
   * Does not support truncation, so ::put is still necessary
 - Use std::shared_ptr for nodes
+- Fix writing to the _control node with writeback caching:
+  * Makes sure that O_APPEND is handled correctly in the kernel
+  * Kernel tracks st[acm]tim for us
