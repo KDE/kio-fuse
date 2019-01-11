@@ -1490,7 +1490,7 @@ void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<v
 					continue;
 				}
 
-				childrenNode->m_stat.st_ino = insertNode(childrenNode);
+				insertNode(childrenNode);
 			}
 		});
 		connect(job, &KIO::ListJob::result, [=] {
@@ -1556,7 +1556,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (KIOFuseNode *, int)> cal
 				attr.st_mode = S_IFDIR | 0755;
 
 				protocolNode = new KIOFuseProtocolNode(KIOFuseIno::Root, url.scheme(), attr);
-				protocolNode->m_stat.st_ino = insertNode(protocolNode);
+				insertNode(protocolNode);
 			}
 
 			QUrl urlWithoutPassword = url;
@@ -1583,7 +1583,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (KIOFuseNode *, int)> cal
 				(dynamic_cast<KIOFuseOriginNode*>(originNode)->m_baseUrl = url).setPath(QStringLiteral("/"));
 			else
 				(dynamic_cast<KIOFuseOriginNode*>(originNode)->m_baseUrl = url).setPath({});
-			originNode->m_stat.st_ino = insertNode(originNode);
+			insertNode(originNode);
 		}
 
 		// Create all path components as directories
@@ -1614,7 +1614,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (KIOFuseNode *, int)> cal
 				attr.st_mode = S_IFDIR | 0755;
 
 				subdirNode = new KIOFuseRemoteDirNode(pathNode->m_stat.st_ino, pathElements[i], attr);
-				subdirNode->m_stat.st_ino = insertNode(subdirNode);
+				insertNode(subdirNode);
 			}
 
 			pathNode = subdirNode;
@@ -1630,7 +1630,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (KIOFuseNode *, int)> cal
 			if(!finalNode)
 				return callback(nullptr, EIO);
 
-			finalNode->m_stat.st_ino = insertNode(finalNode);
+			insertNode(finalNode);
 		}
 
 		callback(finalNode, 0);
