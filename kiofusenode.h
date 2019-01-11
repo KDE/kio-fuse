@@ -39,24 +39,6 @@ public:
 	// this is "for free" - the vtable ptr is enough
 	virtual NodeType type() const = 0;
 
-	// Typesafe cast based on type
-	template<class T> T *as()
-	{
-		if(type() == T::Type)
-			return static_cast<T*>(this);
-
-		return nullptr;
-	}
-
-	// Typesafe cast based on type
-	template<class T> const T *as() const
-	{
-		if(type() == T::Type)
-			return static_cast<const T*>(this);
-
-		return nullptr;
-	}
-
 	// Returns the path upwards until a root node.
 	QString virtualPath(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
 	// Returns the url upwards until a OriginNode is hit.
@@ -75,9 +57,6 @@ public:
 	using KIOFuseNode::KIOFuseNode;
 	std::vector<fuse_ino_t> m_childrenInos;
 };
-
-template<> KIOFuseDirNode *KIOFuseNode::as();
-template<> const KIOFuseDirNode *KIOFuseNode::as() const;
 
 class KIOFuseRootNode : public KIOFuseDirNode {
 public:

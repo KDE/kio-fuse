@@ -149,7 +149,7 @@ void KIOFuseVFS::stop()
 		++it; // Increment now as flushRemoteNode invalidates the iterator
 
 		KIOFuseRemoteFileNode *remoteNode;
-		if(!node || !(remoteNode = node->as<KIOFuseRemoteFileNode>()) || !remoteNode->m_cacheDirty)
+		if(!node || !(remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node)) || !remoteNode->m_cacheDirty)
 		{
 			qWarning(KIOFUSE_LOG) << "Broken inode in dirty set";
 			continue;
@@ -241,7 +241,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		return;
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
-		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		auto *remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node);
 		if(to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
 		              | FUSE_SET_ATTR_MODE
 		              | FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW
@@ -448,7 +448,7 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 		return;
 	}
 
-	fuse_reply_readlink(req, node->as<KIOFuseSymLinkNode>()->m_target.toUtf8().data());
+	fuse_reply_readlink(req, dynamic_cast<KIOFuseSymLinkNode*>(node)->m_target.toUtf8().data());
 }
 
 void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev)
@@ -463,7 +463,7 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
-	KIOFuseRemoteDirNode *remote = node->as<KIOFuseRemoteDirNode>();
+	KIOFuseRemoteDirNode *remote = dynamic_cast<KIOFuseRemoteDirNode*>(node);
 	if(!remote)
 	{
 		fuse_reply_err(req, EINVAL);
@@ -518,7 +518,7 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
-	KIOFuseRemoteDirNode *remote = node->as<KIOFuseRemoteDirNode>();
+	KIOFuseRemoteDirNode *remote = dynamic_cast<KIOFuseRemoteDirNode*>(node);
 	if(!remote)
 	{
 		fuse_reply_err(req, EINVAL);
@@ -566,7 +566,7 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 	}
 
 	// Make sure the to-be deleted node is in a remote dir
-	if(!parentNode->as<KIOFuseRemoteDirNode>())
+	if(!dynamic_cast<KIOFuseRemoteDirNode*>(parentNode))
 	{
 		fuse_reply_err(req, EINVAL);
 		return;
@@ -579,7 +579,7 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 		return;
 	}
 
-	auto *dirNode = node->as<KIOFuseDirNode>();
+	auto *dirNode = dynamic_cast<KIOFuseDirNode*>(node);
 
 	if(!isDirectory && dirNode != nullptr)
 	{
@@ -633,7 +633,7 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 		return;
 	}
 
-	KIOFuseRemoteDirNode *remote = node->as<KIOFuseRemoteDirNode>();
+	KIOFuseRemoteDirNode *remote = dynamic_cast<KIOFuseRemoteDirNode*>(node);
 	if(!remote)
 	{
 		fuse_reply_err(req, EINVAL);
@@ -688,8 +688,8 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 		return;
 	}
 
-	KIOFuseRemoteDirNode *remoteParent = parentNode->as<KIOFuseRemoteDirNode>(),
-	                     *remoteNewParent = newParentNode->as<KIOFuseRemoteDirNode>();
+	KIOFuseRemoteDirNode *remoteParent = dynamic_cast<KIOFuseRemoteDirNode*>(parentNode),
+	                     *remoteNewParent = dynamic_cast<KIOFuseRemoteDirNode*>(newParentNode);
 	if(!remoteParent || !remoteNewParent)
 	{
 		fuse_reply_err(req, EINVAL);
@@ -708,9 +708,9 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 	KIOFuseNode *replacedNode = that->nodeByName(remoteNewParent, newNameStr);
 
 	// Ensure that if node is a directory, replacedNode either does not exist or is an empty directory.
-	if(node->as<KIOFuseDirNode>() != nullptr && replacedNode)
+	if(dynamic_cast<KIOFuseDirNode*>(node) != nullptr && replacedNode)
 	{
-		auto *replacedDir = replacedNode->as<KIOFuseDirNode>();
+		auto *replacedDir = dynamic_cast<KIOFuseDirNode*>(replacedNode);
 		if(!replacedDir)
 		{
 			fuse_reply_err(req, ENOTDIR);
@@ -773,7 +773,7 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		return;
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
-		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		auto *remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node);
 		if(fi->flags & O_TRUNC)
 		{
 			if(!remoteNode->m_localCache || remoteNode->cacheIsComplete())
@@ -847,7 +847,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		return;
 	}
 
-	that->waitUntilChildrenComplete(node->as<KIOFuseDirNode>(), [=](int error){
+	that->waitUntilChildrenComplete(dynamic_cast<KIOFuseDirNode*>(node), [=](int error){
 		if(error)
 		{
 			fuse_reply_err(req, error);
@@ -863,7 +863,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		if(parentNode)
 			appendDirentry(dirbuf, req, "..", &parentNode->m_stat);
 
-		for(auto ino : node->as<KIOFuseDirNode>()->m_childrenInos)
+		for(auto ino : dynamic_cast<KIOFuseDirNode*>(node)->m_childrenInos)
 		{
 			KIOFuseNode *child = that->m_nodes[ino].get();
 			if(!child)
@@ -906,7 +906,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 		return;
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
-		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		auto *remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node);
 		that->waitUntilBytesAvailable(remoteNode, off + size, [=](int error) {
 			if(error != 0 && error != ESPIPE)
 			{
@@ -982,7 +982,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
 		QByteArray data(buf, size); // Copy data
-		auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+		auto *remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node);
 		that->waitUntilBytesAvailable(remoteNode, off + size, [=](int error) {
 			if(error && error != ESPIPE)
 			{
@@ -1029,7 +1029,7 @@ void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_i
 		return;
 	}
 
-	auto *remoteNode = node->as<KIOFuseRemoteFileNode>();
+	auto *remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node);
 	if(!remoteNode)
 	{
 		fuse_reply_err(req, 0);
@@ -1043,7 +1043,7 @@ void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_i
 
 KIOFuseNode *KIOFuseVFS::nodeByName(const KIOFuseNode *parent, const QString name)
 {
-	for(auto ino : parent->as<KIOFuseDirNode>()->m_childrenInos)
+	for(auto ino : dynamic_cast<const KIOFuseDirNode*>(parent)->m_childrenInos)
 	{
 		KIOFuseNode *child = m_nodes[ino].get();
 		if(!child)
@@ -1093,7 +1093,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	}
 
 	// Not found - try again
-	that->waitUntilChildrenComplete(parentNode->as<KIOFuseDirNode>(), [=](int error) {
+	that->waitUntilChildrenComplete(dynamic_cast<KIOFuseDirNode*>(parentNode), [=](int error) {
 		if(error)
 		{
 			fuse_reply_err(req, error);
@@ -1148,7 +1148,7 @@ void KIOFuseVFS::reparentNode(KIOFuseNode *node, fuse_ino_t newParentIno)
 		auto parentNodeIt = m_nodes.find(node->m_parentIno);
 		if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
 		{
-			auto &childrenList = parentNodeIt->second.get()->as<KIOFuseDirNode>()->m_childrenInos;
+			auto &childrenList = dynamic_cast<KIOFuseDirNode*>(parentNodeIt->second.get())->m_childrenInos;
 			auto it = std::find(begin(childrenList), end(childrenList), node->m_stat.st_ino);
 			if(it != childrenList.end())
 				childrenList.erase(it);
@@ -1166,7 +1166,7 @@ void KIOFuseVFS::reparentNode(KIOFuseNode *node, fuse_ino_t newParentIno)
 		// Add to new parent's children list
 		auto parentNodeIt = m_nodes.find(node->m_parentIno);
 		if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
-			parentNodeIt->second.get()->as<KIOFuseDirNode>()->m_childrenInos.push_back(node->m_stat.st_ino);
+			dynamic_cast<KIOFuseDirNode*>(parentNodeIt->second.get())->m_childrenInos.push_back(node->m_stat.st_ino);
 		else
 			qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
 	}
@@ -1189,7 +1189,7 @@ fuse_ino_t KIOFuseVFS::insertNode(KIOFuseNode *node)
 	// Add to parent's child
 	auto parentNodeIt = m_nodes.find(node->m_parentIno);
 	if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
-		parentNodeIt->second.get()->as<KIOFuseDirNode>()->m_childrenInos.push_back(ino);
+		dynamic_cast<KIOFuseDirNode*>(parentNodeIt->second.get())->m_childrenInos.push_back(ino);
 	else
 		qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
 
@@ -1422,7 +1422,7 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 
 void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<void (int)> callback)
 {
-	KIOFuseRemoteDirNode *remoteNode = node->as<KIOFuseRemoteDirNode>();
+	KIOFuseRemoteDirNode *remoteNode = dynamic_cast<KIOFuseRemoteDirNode*>(node);
 	if(!remoteNode)
 		return callback(0); // Not a remote node
 
@@ -1549,9 +1549,9 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (KIOFuseNode *, int)> cal
 			originNode = new KIOFuseOriginNode(protocolNode->m_stat.st_ino, originNodeName, attr);
 			// Find out whether the base URL needs to start with a /
 			if(url.path().startsWith(QLatin1Char('/')))
-				(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath(QStringLiteral("/"));
+				(dynamic_cast<KIOFuseOriginNode*>(originNode)->m_baseUrl = url).setPath(QStringLiteral("/"));
 			else
-				(originNode->as<KIOFuseOriginNode>()->m_baseUrl = url).setPath({});
+				(dynamic_cast<KIOFuseOriginNode*>(originNode)->m_baseUrl = url).setPath({});
 			originNode->m_stat.st_ino = insertNode(originNode);
 		}
 
