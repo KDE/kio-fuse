@@ -70,13 +70,18 @@ private:
 
 private:
 	// Returns nullptr if not found. Ownership remains at m_nodes.
-	KIOFuseNode* nodeByName(const KIOFuseNode *parent, const QString name);
+	KIOFuseNode* nodeByName(const KIOFuseNode *parent, const QString name) const;
 	// Returns nullptr if not found. Ownership remains at m_nodes.
-	KIOFuseNode* nodeForIno(const fuse_ino_t ino);
+	KIOFuseNode* nodeForIno(const fuse_ino_t ino) const;
 	// Removes the node from the old parent's children list (if it has a parent) and adds it to the new parent.
 	void reparentNode(KIOFuseNode *node, fuse_ino_t newParentIno);
 	// Takes ownership of the pointer
 	fuse_ino_t insertNode(KIOFuseNode *node);
+	// Returns the url upwards until a OriginNode is hit.
+	// If no OriginNode is found, an empty QUrl is returned
+	QUrl remoteUrl(const KIOFuseNode *node) const;
+	// Returns the path upwards until a root node.
+	QString virtualPath(KIOFuseNode *node) const;
 	// Fills a (previously zeroed out) struct stat with minimal information
 	void fillStatForFile(struct stat &attr);
 	// Adjusts the lookup count and deletes the node if it is now zero and a child of DeletedRoot.

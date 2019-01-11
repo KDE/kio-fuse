@@ -4,12 +4,10 @@
 - Handle more FUSE ops:
   * link (to allow relinking of deleted nodes only, like O_TMPFILE)
   * statvfs
-  * setattr with modification time
   * ACLs (?)
   * interrupting requests (just killing the KIO Job would also break other requests for the
     same resource)
 - Deal with invalid size reporting slaves (http/gdrive/...)?
-- Evaluate dynamic_cast compared to own implementation
 - Does O_APPEND need special treatment in write or is using off enough?
 - Do st_[acm]tim need to be updated manually?
 - Fix kdeconnect:// to return all children in readdir and not just an incomplete list of broken
@@ -20,3 +18,4 @@
 - Look into using KIO::read/KIO::write if possible:
   * Needs ::open to succeed, has state per slave (?)
   * Does not support truncation, so ::put is still necessary
+- Use std::shared_ptr for nodes

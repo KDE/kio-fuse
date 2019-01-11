@@ -358,8 +358,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				QString newOwner = QString::fromUtf8(pw->pw_name),
 				        newGroup = QString::fromUtf8(gr->gr_name);
 
-				auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
-				auto *job = KIO::chown(url, newOwner, newGroup);
+				auto *job = KIO::chown(that->remoteUrl(node), newOwner, newGroup);
 				that->connect(job, &KIO::SimpleJob::finished, [=] {
 					if(job->error())
 						sharedState->error = EIO;
@@ -383,9 +382,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 
 		if(to_set & (FUSE_SET_ATTR_MODE))
 		{
-			auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
 			auto newMode = attr->st_mode & ~S_IFMT;
-			auto *job = KIO::chmod(url, newMode);
+			auto *job = KIO::chmod(that->remoteUrl(node), newMode);
 			that->connect(job, &KIO::SimpleJob::finished, [=] {
 				if(job->error())
 					sharedState->error = EIO;
@@ -405,13 +403,12 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 
 		if(to_set & (FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW))
 		{
-			auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
 			if(to_set & FUSE_SET_ATTR_MTIME_NOW)
 				sharedState->value.st_mtim = tsNow;
 
 			auto time = QDateTime::fromMSecsSinceEpoch(sharedState->value.st_mtim.tv_sec * 1000
 			                                           + sharedState->value.st_mtim.tv_nsec / 1000000);
-			auto *job = KIO::setModificationTime(url, time);
+			auto *job = KIO::setModificationTime(that->remoteUrl(node), time);
 			that->connect(job, &KIO::SimpleJob::finished, [=] {
 				if(job->error())
 					sharedState->error = EIO;
@@ -477,7 +474,7 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
-	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	auto url = that->remoteUrl(node);
 	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
 	auto *job = KIO::put(url, mode & ~S_IFMT);
 	// Not connecting to the dataReq signal at all results in an empty file
@@ -525,7 +522,7 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
-	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	auto url = that->remoteUrl(node);
 	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
 	auto *job = KIO::mkdir(url, mode & ~S_IFMT);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
@@ -599,8 +596,7 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 		return;
 	}
 
-	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
-	auto *job = KIO::del(url);
+	auto *job = KIO::del(that->remoteUrl(node));
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
 		{
@@ -640,7 +636,7 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 		return;
 	}
 
-	auto url = node->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	auto url = that->remoteUrl(node);
 	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
 	auto *job = KIO::symlink(QString::fromUtf8(link), url);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
@@ -723,8 +719,8 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 		}
 	}
 
-	auto url = remoteParent->remoteUrl([that](auto ino) { return that->nodeForIno(ino); }),
-	     newUrl = remoteNewParent->remoteUrl([that](auto ino) { return that->nodeForIno(ino); });
+	auto url = that->remoteUrl(remoteParent),
+	     newUrl = that->remoteUrl(remoteNewParent);
 	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
 	newUrl.setPath(newUrl.path() + QLatin1Char('/') + newNameStr);
 
@@ -1041,11 +1037,11 @@ void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_i
 	});
 }
 
-KIOFuseNode *KIOFuseVFS::nodeByName(const KIOFuseNode *parent, const QString name)
+KIOFuseNode *KIOFuseVFS::nodeByName(const KIOFuseNode *parent, const QString name) const
 {
 	for(auto ino : dynamic_cast<const KIOFuseDirNode*>(parent)->m_childrenInos)
 	{
-		KIOFuseNode *child = m_nodes[ino].get();
+		KIOFuseNode *child = nodeForIno(ino);
 		if(!child)
 		{
 			qWarning(KIOFUSE_LOG) << "Node" << parent->m_nodeName << "references nonexistant child";
@@ -1128,7 +1124,7 @@ void KIOFuseVFS::forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 	fuse_reply_none(req);
 }
 
-KIOFuseNode *KIOFuseVFS::nodeForIno(const fuse_ino_t ino)
+KIOFuseNode *KIOFuseVFS::nodeForIno(const fuse_ino_t ino) const
 {
 	auto it = m_nodes.find(ino);
 	if(it == m_nodes.end())
@@ -1194,6 +1190,43 @@ fuse_ino_t KIOFuseVFS::insertNode(KIOFuseNode *node)
 		qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
 
 	return ino;
+}
+
+QUrl KIOFuseVFS::remoteUrl(const KIOFuseNode *node) const
+{
+	// Special handling for KIOFuseRemoteFileNode
+	if(auto *remoteFileNode = dynamic_cast<const KIOFuseRemoteFileNode*>(node))
+	{
+		if(!remoteFileNode->m_overrideUrl.isEmpty())
+			return remoteFileNode->m_overrideUrl;
+	}
+
+	QStringList path;
+	for(const KIOFuseNode *currentNode = node; currentNode != nullptr; currentNode = nodeForIno(currentNode->m_parentIno))
+	{
+		if(currentNode->type() == KIOFuseNode::NodeType::OriginNode)
+		{
+			// Origin node found - add path and return
+			path.prepend({}); // Add a leading slash if necessary
+			QUrl url = dynamic_cast<const KIOFuseOriginNode*>(currentNode)->m_baseUrl;
+			url.setPath(url.path() + path.join(QLatin1Char('/')), QUrl::DecodedMode);
+			return url;
+		}
+
+		path.prepend(currentNode->m_nodeName);
+	}
+
+	// No OriginNode found until the root - return an invalid URL
+	return {};
+}
+
+QString KIOFuseVFS::virtualPath(KIOFuseNode *node) const
+{
+	QStringList path;
+	for(const KIOFuseNode *currentNode = node; currentNode != nullptr; currentNode = nodeForIno(currentNode->m_parentIno))
+		path.prepend(currentNode->m_nodeName);
+
+	return path.join(QLatin1Char('/'));
 }
 
 void KIOFuseVFS::fillStatForFile(struct stat &attr)
@@ -1363,8 +1396,7 @@ void KIOFuseVFS::waitUntilBytesAvailable(KIOFuseRemoteFileNode *node, size_t byt
 			return callback(errno);
 
 		// Request the file
-		auto url = node->remoteUrl([this](auto ino) { return nodeForIno(ino); });
-		auto *job = KIO::get(url);
+		auto *job = KIO::get(remoteUrl(node));
 		connect(job, &KIO::TransferJob::data, [=](auto *job, const QByteArray &data) {
 			Q_UNUSED(job);
 
@@ -1432,8 +1464,7 @@ void KIOFuseVFS::waitUntilChildrenComplete(KIOFuseDirNode *node, std::function<v
 	if(!remoteNode->m_childrenRequested)
 	{
 		// List the remote dir
-		auto url = remoteNode->remoteUrl([this](auto ino) { return nodeForIno(ino); });
-		auto *job = KIO::listDir(url);
+		auto *job = KIO::listDir(remoteUrl(remoteNode));
 		connect(job, &KIO::ListJob::entries, [=](auto *job, const KIO::UDSEntryList &entries) {
 			Q_UNUSED(job);
 
@@ -1650,8 +1681,7 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 	node->m_cacheDirty = false;
 	m_dirtyNodes.extract(node->m_stat.st_ino);
 
-	auto url = node->remoteUrl([this](auto ino) { return nodeForIno(ino); });
-	auto *job = KIO::put(url, node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
+	auto *job = KIO::put(remoteUrl(node), node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
 	job->setTotalSize(node->m_cacheSize);
 
 	size_t bytesSent = 0; // Modified inside the lambda

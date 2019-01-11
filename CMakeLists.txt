@@ -33,7 +33,6 @@ set(KIOFUSE_SOURCES
 	main.cpp
 	kiofusevfs.cpp
 	kiofusevfs.h
-	kiofusenode.cpp
 	kiofusenode.h)
 
 ecm_qt_declare_logging_category(KIOFUSE_SOURCES

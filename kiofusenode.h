@@ -39,12 +39,6 @@ public:
 	// this is "for free" - the vtable ptr is enough
 	virtual NodeType type() const = 0;
 
-	// Returns the path upwards until a root node.
-	QString virtualPath(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
-	// Returns the url upwards until a OriginNode is hit.
-	// If no OriginNode is found, an empty QUrl is returned
-	virtual QUrl remoteUrl(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const;
-
 	uint64_t m_lookupCount = 0;
 	fuse_ino_t m_parentIno;
 	QString m_nodeName;
@@ -129,7 +123,6 @@ public:
 	bool m_cacheDirty = false; // Whether the cache content/size changed locally.
 
 	// Override the URL (used for UDS_URL)
-	virtual QUrl remoteUrl(std::function<KIOFuseNode*(fuse_ino_t)> nodeAccessor) const override;
 	QUrl m_overrideUrl;
 Q_SIGNALS:
 	// Emitted when a download operation on this node made progress, finished or failed.
