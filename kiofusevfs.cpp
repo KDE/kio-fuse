@@ -1611,7 +1611,10 @@ void KIOFuseVFS::markCacheDirty(KIOFuseRemoteFileNode *node)
 {
 	node->m_cacheGeneration++;
 	if(node->m_cacheGeneration == node->m_cacheGenerationFlushed)
-		node->m_cacheGeneration++; // Overflow -> make sure it's distinct
+	{
+		qWarning(KIOFUSE_LOG) << "Cache generation overflow";
+		node->m_cacheGeneration++; // At least make sure it's distinct
+	}
 
 	m_dirtyNodes.insert(node->m_stat.st_ino);
 }
