@@ -164,7 +164,7 @@ void KIOFuseVFS::stop()
 		++it; // Increment now as flushRemoteNode invalidates the iterator
 
 		KIOFuseRemoteFileNode *remoteNode;
-		if(!node || !(remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node)) || !remoteNode->m_cacheDirty)
+		if(!node || !(remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node)) || !remoteNode->cacheIsDirty())
 		{
 			qWarning(KIOFUSE_LOG) << "Broken inode in dirty set";
 			continue;
@@ -293,7 +293,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				// Just create an empty file
 				remoteNode->m_localCache = tmpfile();
 				remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
-				remoteNode->m_cacheDirty = true;
+				that->markCacheDirty(remoteNode);
 
 				to_set &= ~FUSE_SET_ATTR_SIZE; // Done already!
 			}
@@ -334,7 +334,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 					else
 					{
 						remoteNode->m_cacheSize = remoteNode->m_stat.st_size = sharedState->value.st_size;
-						remoteNode->m_cacheDirty = true;
+						that->markCacheDirty(remoteNode);
 					}
 				}
 
@@ -792,7 +792,7 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 				// Create a mew the cache file
 				remoteNode->m_localCache = tmpfile();
 				remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
-				remoteNode->m_cacheDirty = true;
+				that->markCacheDirty(remoteNode);
 			}
 			else if(!remoteNode->cacheIsComplete())
 			{
@@ -813,7 +813,7 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 						fclose(remoteNode->m_localCache);
 						remoteNode->m_localCache = tmpfile();
 						remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
-						remoteNode->m_cacheDirty = true;
+						that->markCacheDirty(remoteNode);
 
 						fuse_reply_open(req, fi);
 						remoteNode->disconnect(conn);
@@ -1006,9 +1006,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 
 			remoteNode->m_cacheSize = std::max(remoteNode->m_cacheSize, off + size);
 			remoteNode->m_stat.st_size = remoteNode->m_cacheSize;
-
-			remoteNode->m_cacheDirty = true;
-			that->m_dirtyNodes.insert(node->m_stat.st_ino);
+			that->markCacheDirty(remoteNode);
 
 			fuse_reply_write(req, data.size());
 		});
@@ -1674,9 +1672,18 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 	}
 }
 
+void KIOFuseVFS::markCacheDirty(KIOFuseRemoteFileNode *node)
+{
+	node->m_cacheGeneration++;
+	if(node->m_cacheGeneration == node->m_cacheGenerationFlushed)
+		node->m_cacheGeneration++; // Overflow -> make sure it's distinct
+
+	m_dirtyNodes.insert(node->m_stat.st_ino);
+}
+
 void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void (int)> callback)
 {
-	if(!node->m_cacheDirty)
+	if(!node->cacheIsDirty())
 		return callback(0);
 
 	if(node->m_parentIno == KIOFuseIno::DeletedRoot)
@@ -1688,8 +1695,8 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 
 	qDebug(KIOFUSE_LOG) << "Flushing node" << node->m_nodeName;
 
-	// Clear the flag now to not lose any writes that happen while sending data.
-	node->m_cacheDirty = false;
+	int cacheGeneration = node->m_cacheGeneration;
+	// If the generation gets bumped while flushing, it'll be added back
 	m_dirtyNodes.extract(node->m_stat.st_ino);
 
 	auto *job = KIO::put(remoteUrl(node), node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
@@ -1721,11 +1728,11 @@ void KIOFuseVFS::flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void
 		if(job->error())
 		{
 			qWarning(KIOFUSE_LOG) << "Failed to send data:" << job->errorString();
-			node->m_cacheDirty = true;
-			m_dirtyNodes.insert(node->m_stat.st_ino);
+			m_dirtyNodes.insert(node->m_stat.st_ino); // Try again
 			return callback(EIO);
 		}
 
+		node->m_cacheGenerationFlushed = cacheGeneration;
 		callback(0);
 	});
 }

@@ -103,6 +103,8 @@ private:
 	void mountUrl(QUrl url, std::function<void(KIOFuseNode *node, int error)> callback);
 	// Handle the _control command in cmd asynchronously and call callback upon completion or failure.
 	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
+	// Mark a node's cache as dirty
+	void markCacheDirty(KIOFuseRemoteFileNode *node);
 	// If the cache is dirty, writes the local cache to the remote. Callback is called on success, failure
 	// or if cache was not dirty.
 	void flushRemoteNode(KIOFuseRemoteFileNode *node, std::function<void(int error)> callback);
