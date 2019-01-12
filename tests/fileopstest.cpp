@@ -47,7 +47,10 @@ void FileOpsTest::initTestCase()
 
 	m_controlFile.setFileName(m_mountDir.filePath(QStringLiteral("_control")));
 
+	// Make sure that it works with both truncation and without
 	QVERIFY(m_controlFile.open(QIODevice::WriteOnly | QIODevice::Unbuffered));
+	m_controlFile.close();
+	QVERIFY(m_controlFile.open(QIODevice::WriteOnly | QIODevice::Unbuffered | QIODevice::Truncate));
 }
 
 void FileOpsTest::cleanupTestCase()

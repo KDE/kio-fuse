@@ -33,7 +33,6 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.rmdir = &KIOFuseVFS::rmdir,
 	.symlink = &KIOFuseVFS::symlink,
 	.rename = &KIOFuseVFS::rename,
-	.open =  &KIOFuseVFS::open,
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
 	.flush = &KIOFuseVFS::flush,
@@ -215,6 +214,7 @@ void KIOFuseVFS::init(void *userdata, fuse_conn_info *conn)
 	Q_UNUSED(userdata);
 
 	conn->want &= ~FUSE_CAP_HANDLE_KILLPRIV; // Don't care about resetting setuid/setgid flags
+	conn->want &= ~FUSE_CAP_ATOMIC_O_TRUNC; // Use setattr with st_size = 0 instead of open with O_TRUNC
 	// This should ideally be enabled, but it breaks writing to _control.
 	conn->want &= ~FUSE_CAP_WRITEBACK_CACHE;
 	conn->time_gran = 1000000000; // Only second resolution for mtime
@@ -249,6 +249,14 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 	{
 	default:
 		fuse_reply_err(req, EOPNOTSUPP);
+		return;
+	case KIOFuseNode::NodeType::ControlNode:
+		// Only truncation to 0 supported
+		if((to_set & FUSE_SET_ATTR_SIZE) == FUSE_SET_ATTR_SIZE && attr->st_size == 0)
+			replyAttr(req, node);
+		else
+			fuse_reply_err(req, EOPNOTSUPP);
+
 		return;
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
@@ -755,79 +763,6 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 
 		that->decrementLookupCount(newParentNode);
 	});
-}
-
-void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
-{
-	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
-	KIOFuseNode *node = that->nodeForIno(ino);
-	if(!node)
-	{
-		fuse_reply_err(req, EIO);
-		return;
-	}
-
-	if(node->type() <= KIOFuseNode::NodeType::LastDirType)
-	{
-		fuse_reply_err(req, EISDIR);
-		return;
-	}
-
-	switch(node->type())
-	{
-	default:
-		fuse_reply_open(req, fi);
-		return;
-	case KIOFuseNode::NodeType::RemoteFileNode:
-	{
-		auto *remoteNode = dynamic_cast<KIOFuseRemoteFileNode*>(node);
-		if(fi->flags & O_TRUNC)
-		{
-			if(!remoteNode->m_localCache || remoteNode->cacheIsComplete())
-			{
-				// Cache not filled - just create an empty file
-				if(remoteNode->m_localCache)
-					fclose(remoteNode->m_localCache);
-
-				// Create a mew the cache file
-				remoteNode->m_localCache = tmpfile();
-				remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
-				that->markCacheDirty(remoteNode);
-			}
-			else if(!remoteNode->cacheIsComplete())
-			{
-				// Cache is being filled - wait until complete
-				// Using a unique_ptr here to let the lambda disconnect the connection itself
-				auto connection = std::make_unique<QMetaObject::Connection>();
-				auto &conn = *connection;
-				conn = that->connect(remoteNode, &KIOFuseRemoteFileNode::localCacheChanged,
-				               [=, connection = std::move(connection)](int error) {
-					if(error)
-					{
-						fuse_reply_err(req, error);
-						remoteNode->disconnect(conn);
-					}
-					else if(remoteNode->cacheIsComplete())
-					{
-						// Create a new empty cache file
-						fclose(remoteNode->m_localCache);
-						remoteNode->m_localCache = tmpfile();
-						remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
-						that->markCacheDirty(remoteNode);
-
-						fuse_reply_open(req, fi);
-						remoteNode->disconnect(conn);
-					}
-				});
-				return;
-			}
-			else
-				Q_ASSERT(false);
-		}
-
-		fuse_reply_open(req, fi);
-	}
-	}
 }
 
 static void appendDirentry(std::vector<char> &dirbuf, fuse_req_t req, const char *name, const struct stat *stbuf)

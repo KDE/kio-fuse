@@ -59,7 +59,6 @@ private:
 	static void symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name);
 	static void rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent,
 	                   const char *newname, unsigned int flags);
-	static void open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                    struct fuse_file_info *fi);
 	static void read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
