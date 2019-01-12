@@ -1,5 +1,4 @@
-#ifndef KIOFUSEVFS_H
-#define KIOFUSEVFS_H
+#pragma once
 
 #include <fuse_lowlevel.h>
 
@@ -124,5 +123,3 @@ private:
 	// Map of all known inodes to KIOFuseNodes
 	std::unordered_map<fuse_ino_t, std::unique_ptr<KIOFuseNode>> m_nodes;
 };
-
-#endif // KIOFUSEVFS_H
