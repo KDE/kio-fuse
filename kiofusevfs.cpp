@@ -139,6 +139,20 @@ bool KIOFuseVFS::start(struct fuse_args &args, const char *mountpoint)
 
 void KIOFuseVFS::stop()
 {
+	if(m_fuseSession)
+	{
+		// Disable the QSocketNotifier
+		m_fuseNotifier.reset();
+
+		// Disarm the QEventLoopLocker
+		m_eventLoopLocker.reset();
+
+		fuse_remove_signal_handlers(m_fuseSession);
+		fuse_session_unmount(m_fuseSession);
+		fuse_session_destroy(m_fuseSession);
+		m_fuseSession = nullptr;
+	}
+
 	// Flush all dirty nodes
 	QEventLoop loop;
 	bool needEventLoop = false;
@@ -167,20 +181,6 @@ void KIOFuseVFS::stop()
 
 	if(needEventLoop)
 		loop.exec(); // Wait until all QEventLoopLockers got destroyed
-
-	if(m_fuseSession)
-	{
-		// Disable the QSocketNotifier
-		m_fuseNotifier.reset();
-
-		// Disarm the QEventLoopLocker
-		m_eventLoopLocker.reset();
-
-		fuse_remove_signal_handlers(m_fuseSession);
-		fuse_session_unmount(m_fuseSession);
-		fuse_session_destroy(m_fuseSession);
-		m_fuseSession = nullptr;
-	}
 }
 
 void KIOFuseVFS::fuseRequestPending()
@@ -1019,7 +1019,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 void KIOFuseVFS::flush(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 {
 	// This is called on each close of a FD, so it might be a bit overzealous
-	// do writeback here. I can't think of a better alternative though -
+	// to do writeback here. I can't think of a better alternative though -
 	// doing it only on fsync and the final forget seems like a bit too late.
 
 	return KIOFuseVFS::fsync(req, ino, 1, fi);
