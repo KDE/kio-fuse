@@ -44,7 +44,6 @@ public:
 		// Dir types
 		RootNode,
 		ProtocolNode,
-		OriginNode,
 		RemoteDirNode,
 		LastDirType = RemoteDirNode,
 
@@ -65,6 +64,7 @@ public:
 	struct stat m_stat;
 };
 
+// Virtual base class for all nodes representing a directory
 class KIOFuseDirNode : public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
@@ -92,6 +92,9 @@ public:
 	static const NodeType Type = NodeType::RemoteDirNode;
 	NodeType type() const override { return Type; }
 
+	// Override the URL
+	QUrl m_overrideUrl;
+
 	// Whether the list of children is the result of a successful dirlist
 	bool m_childrenComplete = false;
 	// Whether a dirlist was requested. If true, the signal "gotChildren" will
@@ -101,14 +104,6 @@ public:
 Q_SIGNALS:
 	// Emitted after finishing (successful or not) a distlist on this node
 	void gotChildren(int error);
-};
-
-class KIOFuseOriginNode : public KIOFuseRemoteDirNode {
-public:
-	using KIOFuseRemoteDirNode::KIOFuseRemoteDirNode;
-	static const NodeType Type = NodeType::OriginNode;
-	NodeType type() const override { return Type; }
-	QUrl m_baseUrl;
 };
 
 class KIOFuseControlNode : public KIOFuseNode {

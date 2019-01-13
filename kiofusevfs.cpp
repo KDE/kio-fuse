@@ -1154,11 +1154,12 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 	QStringList path;
 	for(const KIOFuseNode *currentNode = node.get(); currentNode != nullptr; currentNode = nodeForIno(currentNode->m_parentIno).get())
 	{
-		if(currentNode->type() == KIOFuseNode::NodeType::OriginNode)
+		auto remoteDirNode = dynamic_cast<const KIOFuseRemoteDirNode*>(currentNode);
+		if(remoteDirNode && !remoteDirNode->m_overrideUrl.isEmpty())
 		{
-			// Origin node found - add path and return
+			// Origin found - add path and return
 			path.prepend({}); // Add a leading slash if necessary
-			QUrl url = dynamic_cast<const KIOFuseOriginNode*>(currentNode)->m_baseUrl;
+			QUrl url = remoteDirNode->m_overrideUrl;
 			url.setPath(url.path() + path.join(QLatin1Char('/')), QUrl::DecodedMode);
 			return url;
 		}
@@ -1166,7 +1167,7 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 		path.prepend(currentNode->m_nodeName);
 	}
 
-	// No OriginNode found until the root - return an invalid URL
+	// No origin found until the root - return an invalid URL
 	return {};
 }
 
@@ -1301,7 +1302,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 		else if(entry.isLink())
 			return nullptr; // Does this even happen?
 		else if(entry.isDir())
-			return nullptr; // Maybe create a mountpoint (OriginNode) here?
+			return nullptr; // Maybe create a mountpoint (remote dir with override URL) here?
 		else // Regular file pointing to URL
 		{
 			attr.st_mode |= S_IFREG;
@@ -1528,17 +1529,17 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 			fillStatForFile(attr);
 			attr.st_mode = S_IFDIR | 0755;
 
-			auto newOriginNode = std::make_shared<KIOFuseOriginNode>(protocolNode->m_stat.st_ino, originNodeName, attr);
+			auto newOriginNode = std::make_shared<KIOFuseRemoteDirNode>(protocolNode->m_stat.st_ino, originNodeName, attr);
 			// Find out whether the base URL needs to start with a /
 			if(url.path().startsWith(QLatin1Char('/')))
-				(newOriginNode->m_baseUrl = url).setPath(QStringLiteral("/"));
+				(newOriginNode->m_overrideUrl = url).setPath(QStringLiteral("/"));
 			else
-				(newOriginNode->m_baseUrl = url).setPath({});
+				(newOriginNode->m_overrideUrl = url).setPath({});
 
 			originNode = newOriginNode;
 			insertNode(originNode);
 		}
-		else if(originNode->type() != KIOFuseNode::NodeType::OriginNode)
+		else if(originNode->type() != KIOFuseNode::NodeType::RemoteDirNode)
 			    return callback(nullptr, EIO);
 
 		// Create all path components as directories

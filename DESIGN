@@ -75,25 +75,25 @@ During runtime, the tree can look like this:
 "" (ino: 1)             "_control" (ino: 3)
 KIOFuseRootNode ----->  KIOFuseControlNode
     |
-	|        "smb"
-	|------> KIOFuseProtocolNode
-	|    	   \
-	|    		\        "user@fileserver01"       "a file"
-	|    		 ------> KIOFuseOriginNode  -----> KIOFuseRemoteFileNode
-	|                    "user:pass@fileserver01"
-	|    					 \
-	|    					  \        "directory"
-	|    					   ------> KIOFuseRemoteDirNode
-	|    								   \
-	|    									\        "another file"
-	|    									 ------> KIOFuseRemoteFileNode
-	|
-	|       "sftp"
-	------> KIOFuseProtocolNode
-	        \
-			 \        "user@someserver"         "a file"
-			  ------> KIOFuseOriginNode  -----> KIOFuseRemoteFileNode
-			          "user:pass@someserver"
+    |        "smb"
+    |------> KIOFuseProtocolNode
+    |           \
+    |            \        "user@fileserver01"       "a file"
+    |             ------> KIOFuseRemoteDirNode -----> KIOFuseRemoteFileNode
+    |                    "user:pass@fileserver01"
+    |                         \
+    |                          \        "directory"
+    |                           ------> KIOFuseRemoteDirNode
+    |                                       \
+    |                                        \        "another file"
+    |                                         ------> KIOFuseRemoteFileNode
+    |
+    |       "sftp"
+    ------> KIOFuseProtocolNode
+            \
+             \        "user@someserver"         "a file"
+              ------> KIOFuseRemoteDirNode -----> KIOFuseRemoteFileNode
+                      "user:pass@someserver"
 
 "" (ino: 2)           "deleted file"
 KIOFuseRootNode ----> KIOFuseRemoteFileNode
@@ -101,8 +101,10 @@ KIOFuseRootNode ----> KIOFuseRemoteFileNode
 The root node with inode number 1 represents the root of the VFS.
 Only files below are visible in the VFS hierarchy.
 
-Each KIOFuseOriginNode stores the full URL (with password) internally, but the
-node's name contains only the username and host.
+Both kinds of remote nodes (KIOFuseRemoteDirNode, KIOFuseRemoteFileNode) have
+an m_overrideUrl member which is used to implement URL mountpoints and
+redirections. To get the remote URL of a node, the tree is traversed upwards
+until an override is found and the path is appended.
 
 Unlinking a node
 ----------------
@@ -124,20 +126,20 @@ and the result is sent.
 
 void KIOFuseVFS::operation(fuse_req_t req, fuse_ino_t inode, ...)
 {
-    KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	auto node = that->nodeForIno(parent);
 	if(!node) complain and return;
 
-    auto job = KIO::operation(that->remoteUrl(node), ...);
+	auto job = KIO::operation(that->remoteUrl(node), ...);
 	connect(job, &finished, [=](int error) {
-	    if(error)
-		    fuse_reply_err(req, EIO);
+		if(error)
+			fuse_reply_err(req, EIO);
 		else
 		{
-		    that->doOperation(node);
+			that->doOperation(node);
 			fuse_reply_result(req, ...);
 		}
-		});
+	});
 }
 
 Permissions
