@@ -326,6 +326,17 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 
 		auto sharedState = std::make_shared<SetattrState>((SetattrState){to_set, 0, *attr});
 
+		auto markOperationCompleted = [=] (int to_set_done){
+			sharedState->to_set_remaining &= ~to_set_done;
+			if(!sharedState->to_set_remaining)
+			{
+				if(sharedState->error)
+					fuse_reply_err(req, sharedState->error);
+				else
+					replyAttr(req, remoteNode);
+			}
+		};
+
 		if(to_set & FUSE_SET_ATTR_SIZE)
 		{
 			// Have to wait until the cache is complete to truncate.
@@ -347,14 +358,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 					}
 				}
 
-				sharedState->to_set_remaining &= ~FUSE_SET_ATTR_SIZE;
-				if(!sharedState->to_set_remaining)
-				{
-					if(sharedState->error)
-						fuse_reply_err(req, sharedState->error);
-					else
-						replyAttr(req, remoteNode);
-				}
+				markOperationCompleted(FUSE_SET_ATTR_SIZE);
 			});
 		}
 
@@ -370,8 +374,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 
 			if(!pw || !gr)
 			{
-				sharedState->to_set_remaining &= ~(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
 				sharedState->error = ENOENT;
+				markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
 			}
 			else
 			{
@@ -388,14 +392,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 						remoteNode->m_stat.st_gid = newGid;
 					}
 
-					sharedState->to_set_remaining &= ~(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
-					if(!sharedState->to_set_remaining)
-					{
-						if(sharedState->error)
-							fuse_reply_err(req, sharedState->error);
-						else
-							replyAttr(req, remoteNode);
-					}
+					markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
 				});
 			}
 		}
@@ -410,14 +407,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				else
 					remoteNode->m_stat.st_mode = (remoteNode->m_stat.st_mode & S_IFMT) | newMode;
 
-				sharedState->to_set_remaining &= ~FUSE_SET_ATTR_MODE;
-				if(!sharedState->to_set_remaining)
-				{
-					if(sharedState->error)
-						fuse_reply_err(req, sharedState->error);
-					else
-						replyAttr(req, remoteNode);
-				}
+				markOperationCompleted(FUSE_SET_ATTR_MODE);
 			});
 		}
 
@@ -435,14 +425,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				else // This is not quite correct, as KIO rounded the value down to a second
 					remoteNode->m_stat.st_mtim = sharedState->value.st_mtim;
 
-				sharedState->to_set_remaining &= ~(FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW);
-				if(!sharedState->to_set_remaining)
-				{
-					if(sharedState->error)
-						fuse_reply_err(req, sharedState->error);
-					else
-						replyAttr(req, remoteNode);
-				}
+				markOperationCompleted(FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW);
 			});
 		}
 	}
