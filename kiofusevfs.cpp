@@ -33,6 +33,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.rmdir = &KIOFuseVFS::rmdir,
 	.symlink = &KIOFuseVFS::symlink,
 	.rename = &KIOFuseVFS::rename,
+	.open = &KIOFuseVFS::open,
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
 	.flush = &KIOFuseVFS::flush,
@@ -213,8 +214,7 @@ void KIOFuseVFS::init(void *userdata, fuse_conn_info *conn)
 
 	conn->want &= ~FUSE_CAP_HANDLE_KILLPRIV; // Don't care about resetting setuid/setgid flags
 	conn->want &= ~FUSE_CAP_ATOMIC_O_TRUNC; // Use setattr with st_size = 0 instead of open with O_TRUNC
-	// This should ideally be enabled, but it breaks writing to _control.
-	conn->want &= ~FUSE_CAP_WRITEBACK_CACHE;
+	conn->want |= FUSE_CAP_WRITEBACK_CACHE; // Kernel caches reads/writes, handles O_APPEND and st_[acm]tim
 	conn->time_gran = 1000000000; // Only second resolution for mtime
 }
 
@@ -262,7 +262,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		if(to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
 		              | FUSE_SET_ATTR_MODE
 		              | FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW
-		              | FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW)) // Unsupported operation requested?
+		              | FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW
+		              | FUSE_SET_ATTR_CTIME)) // Unsupported operation requested?
 		{
 			// Don't do anything
 			fuse_reply_err(req, EOPNOTSUPP);
@@ -275,19 +276,21 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 
 		// Can anything be done directly?
 
-		// This is a hack: Access time is not actually passed through to KIO.
-		// For the specific case that ATIME_NOW is set (touch/futimensat(, NULL) do that),
-		// it's modified in the local cache only.
+		// This is a hack: Access and change time are not actually passed through to KIO.
+		// The kernel sends request for those if writeback caching is enabled, so it's not
+		// possible to ignore them. So just save them in the local cache.
 		if(to_set & (FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW))
 		{
-			if(!(to_set & (FUSE_SET_ATTR_ATIME_NOW)))
-			{
-			   fuse_reply_err(req, EOPNOTSUPP);
-			   return;
-			}
+			if(to_set & FUSE_SET_ATTR_ATIME_NOW)
+				attr->st_atim = tsNow;
 
-			remoteNode->m_stat.st_atim = attr->st_atim = tsNow;
+			remoteNode->m_stat.st_atim = attr->st_atim;
 			to_set &= ~(FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW);
+		}
+		if(to_set & FUSE_SET_ATTR_CTIME)
+		{
+			remoteNode->m_stat.st_ctim = attr->st_ctim;
+			to_set &= ~FUSE_SET_ATTR_CTIME;
 		}
 
 		if(to_set & FUSE_SET_ATTR_SIZE)
@@ -681,6 +684,14 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 			fuse_reply_entry(req, &entry);
 		});
 	});
+}
+
+void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
+{
+	if(ino == KIOFuseIno::Control)
+		fi->direct_io = true; // Necessary to get each command directly
+
+	fuse_reply_open(req, fi);
 }
 
 void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent, const char *newname, unsigned int flags)

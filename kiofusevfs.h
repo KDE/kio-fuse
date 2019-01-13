@@ -56,6 +56,7 @@ private:
 	static void unlink(fuse_req_t req, fuse_ino_t parent, const char *name); // Just calls unlinkHelper
 	static void rmdir(fuse_req_t req, fuse_ino_t parent, const char *name); // Just calls unlinkHelper
 	static void symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name);
+	static void open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi);
 	static void rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent,
 	                   const char *newname, unsigned int flags);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,

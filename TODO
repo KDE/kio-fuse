@@ -12,13 +12,10 @@
 - Deal with slaves which don't support stat (fonts/...)?
 - Fix kdeconnect:// to return all children in readdir and not just an incomplete list of broken
   links (or add a workaround?)
-- Refresh attributes of files/dirs and children of dirs after a while
+- Refresh attributes of files/dirs and children of dirs after a while:
 - Flush dirty cache files automatically after being unused for a while
-- Drop unused cache files after a while (?)
+- Drop unused cache files after a while (?) (important to notify the kernel about this to avoid
+  desync)
 - Look into using KIO::read/KIO::write if possible:
   * Needs ::open to succeed, has state per slave (?)
   * Does not support truncation, so ::put is still necessary
-- Use std::shared_ptr for nodes
-- Fix writing to the _control node with writeback caching:
-  * Makes sure that O_APPEND is handled correctly in the kernel
-  * Kernel tracks st[acm]tim for us
