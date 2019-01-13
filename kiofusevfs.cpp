@@ -1622,6 +1622,18 @@ void KIOFuseVFS::flushRemoteNode(const std::shared_ptr<KIOFuseRemoteFileNode> &n
 		return callback(0);
 	}
 
+	// Don't send incomplete data
+	if(!node->cacheIsComplete())
+	{
+		qDebug(KIOFUSE_LOG) << "Deferring flushing of node" << node->m_nodeName << "until cache complete";
+		return waitUntilBytesAvailable(node, SIZE_MAX, [=](int error) {
+			if(error)
+				callback(error);
+			else
+				flushRemoteNode(node, callback);
+		});
+	}
+
 	qDebug(KIOFUSE_LOG) << "Flushing node" << node->m_nodeName;
 
 	int cacheGeneration = node->m_cacheGeneration;
