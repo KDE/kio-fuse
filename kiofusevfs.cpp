@@ -1600,13 +1600,7 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 
 void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &node)
 {
-	node->m_cacheGeneration++;
-	if(node->m_cacheGeneration == node->m_cacheGenerationFlushed)
-	{
-		qWarning(KIOFUSE_LOG) << "Cache generation overflow";
-		node->m_cacheGeneration++; // At least make sure it's distinct
-	}
-
+	node->m_cacheDirty = true;
 	m_dirtyNodes.insert(node->m_stat.st_ino);
 }
 
@@ -1636,8 +1630,8 @@ void KIOFuseVFS::flushRemoteNode(const std::shared_ptr<KIOFuseRemoteFileNode> &n
 
 	qDebug(KIOFUSE_LOG) << "Flushing node" << node->m_nodeName;
 
-	int cacheGeneration = node->m_cacheGeneration;
-	// If the generation gets bumped while flushing, it'll be added back
+	// Clear the flag now to not lose any writes that happen while sending data
+	node->m_cacheDirty = false;
 	m_dirtyNodes.extract(node->m_stat.st_ino);
 
 	auto *job = KIO::put(remoteUrl(node), node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
@@ -1669,11 +1663,10 @@ void KIOFuseVFS::flushRemoteNode(const std::shared_ptr<KIOFuseRemoteFileNode> &n
 		if(job->error())
 		{
 			qWarning(KIOFUSE_LOG) << "Failed to send data:" << job->errorString();
-			m_dirtyNodes.insert(node->m_stat.st_ino); // Try again
+			markCacheDirty(node); // Try again
 			return callback(EIO);
 		}
 
-		node->m_cacheGenerationFlushed = cacheGeneration;
 		callback(0);
 	});
 }

@@ -120,9 +120,8 @@ public:
 	bool cacheIsComplete() { return m_localCache && m_cacheSize == size_t(m_stat.st_size); }
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
 	size_t m_cacheSize = 0; // Size of the local cache - might be less than m_stat.st_size.
-	bool cacheIsDirty() { return m_cacheGeneration != m_cacheGenerationFlushed; }
-	int m_cacheGeneration = 0, // Incremented on every write to m_localCache
-	    m_cacheGenerationFlushed = 0; // The generation of the last successfully flushed cache
+	bool cacheIsDirty() { return m_cacheDirty; }
+	int m_cacheDirty = false; // Set on every write to m_localCache
 
 	// Override the URL (used for UDS_URL)
 	QUrl m_overrideUrl;
