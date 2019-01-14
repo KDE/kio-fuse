@@ -256,14 +256,16 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			fuse_reply_err(req, EOPNOTSUPP);
 
 		return;
+	case KIOFuseNode::NodeType::RemoteDirNode:
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-		if(to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
+		auto remoteFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
+		if((to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
 		              | FUSE_SET_ATTR_MODE
 		              | FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW
 		              | FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW
-		              | FUSE_SET_ATTR_CTIME)) // Unsupported operation requested?
+		              | FUSE_SET_ATTR_CTIME))
+		   || (!remoteFileNode && (to_set & FUSE_SET_ATTR_SIZE))) // Unsupported operation requested?
 		{
 			// Don't do anything
 			fuse_reply_err(req, EOPNOTSUPP);
@@ -284,12 +286,12 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			if(to_set & FUSE_SET_ATTR_ATIME_NOW)
 				attr->st_atim = tsNow;
 
-			remoteNode->m_stat.st_atim = attr->st_atim;
+			node->m_stat.st_atim = attr->st_atim;
 			to_set &= ~(FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW);
 		}
 		if(to_set & FUSE_SET_ATTR_CTIME)
 		{
-			remoteNode->m_stat.st_ctim = attr->st_ctim;
+			node->m_stat.st_ctim = attr->st_ctim;
 			to_set &= ~FUSE_SET_ATTR_CTIME;
 		}
 
@@ -297,12 +299,12 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		{
 			// Can be done directly if the new size is zero (and there is no get going on).
 			// This is an optimization to avoid fetching the entire file just to ignore its content.
-			if(!remoteNode->m_localCache && attr->st_size == 0)
+			if(!remoteFileNode->m_localCache && attr->st_size == 0)
 			{
 				// Just create an empty file
-				remoteNode->m_localCache = tmpfile();
-				remoteNode->m_cacheSize = remoteNode->m_stat.st_size = 0;
-				that->markCacheDirty(remoteNode);
+				remoteFileNode->m_localCache = tmpfile();
+				remoteFileNode->m_cacheSize = remoteFileNode->m_stat.st_size = 0;
+				that->markCacheDirty(remoteFileNode);
 
 				to_set &= ~FUSE_SET_ATTR_SIZE; // Done already!
 			}
@@ -333,7 +335,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				if(sharedState->error)
 					fuse_reply_err(req, sharedState->error);
 				else
-					replyAttr(req, remoteNode);
+					replyAttr(req, node);
 			}
 		};
 
@@ -342,19 +344,19 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			// Have to wait until the cache is complete to truncate.
 			// Waiting until all bytes up to the truncation point are available won't work,
 			// as the fetch function would just overwrite the cache.
-			that->waitUntilBytesAvailable(remoteNode, SIZE_MAX, [=](int error) {
+			that->waitUntilBytesAvailable(remoteFileNode, SIZE_MAX, [=](int error) {
 				if(error && error != ESPIPE)
 					sharedState->error = error;
 				else // Cache complete!
 				{
 					// Truncate the cache file
-					if(fflush(remoteNode->m_localCache) != 0
-					    || ftruncate(fileno(remoteNode->m_localCache), sharedState->value.st_size) == -1)
+					if(fflush(remoteFileNode->m_localCache) != 0
+					    || ftruncate(fileno(remoteFileNode->m_localCache), sharedState->value.st_size) == -1)
 						sharedState->error = errno;
 					else
 					{
-						remoteNode->m_cacheSize = remoteNode->m_stat.st_size = sharedState->value.st_size;
-						that->markCacheDirty(remoteNode);
+						remoteFileNode->m_cacheSize = remoteFileNode->m_stat.st_size = sharedState->value.st_size;
+						that->markCacheDirty(remoteFileNode);
 					}
 				}
 
@@ -388,8 +390,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 						sharedState->error = EIO;
 					else
 					{
-						remoteNode->m_stat.st_uid = newUid;
-						remoteNode->m_stat.st_gid = newGid;
+						node->m_stat.st_uid = newUid;
+						node->m_stat.st_gid = newGid;
 					}
 
 					markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
@@ -405,7 +407,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				if(job->error())
 					sharedState->error = EIO;
 				else
-					remoteNode->m_stat.st_mode = (remoteNode->m_stat.st_mode & S_IFMT) | newMode;
+					node->m_stat.st_mode = (node->m_stat.st_mode & S_IFMT) | newMode;
 
 				markOperationCompleted(FUSE_SET_ATTR_MODE);
 			});
@@ -423,7 +425,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				if(job->error())
 					sharedState->error = EIO;
 				else // This is not quite correct, as KIO rounded the value down to a second
-					remoteNode->m_stat.st_mtim = sharedState->value.st_mtim;
+					node->m_stat.st_mtim = sharedState->value.st_mtim;
 
 				markOperationCompleted(FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW);
 			});

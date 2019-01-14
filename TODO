@@ -2,7 +2,6 @@
   children and storing a copy of childrenInos in fuse_file_info.
 - Install own signal handlers
 - Handle more FUSE ops:
-  * setattr on directories
   * link (to allow relinking of deleted nodes only, like O_TMPFILE)
   * statvfs (?)
   * ACLs (?)
@@ -16,6 +15,7 @@
 - Flush dirty cache files automatically after being unused for a while
 - Drop unused cache files after a while (?) (important to notify the kernel about this to avoid
   desync)
+- Merge KIOFuseOriginNode and KIOFuseRemoteDirNode by introducing m_overrideUrl
 - Look into using KIO::read/KIO::write if possible:
   * Needs ::open to succeed, has state per slave (?)
   * Does not support truncation, so ::put is still necessary

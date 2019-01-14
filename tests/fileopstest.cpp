@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -18,6 +19,7 @@ private Q_SLOTS:
 
 	void testControlFile();
 	void testLocalFileOps();
+	void testLocalDirOps();
 	void testCreationOps();
 	void testRenameOps();
 	void testDeletionOps();
@@ -176,7 +178,7 @@ void FileOpsTest::testLocalFileOps()
 
 	// Test chown by not changing anything (no CAP_CHOWN...)
 	QCOMPARE(chown(mirroredFile.fileName().toUtf8().data(), getuid(), getgid()), 0);
-	localFileInfo = QFileInfo(localFile);
+	localFileInfo.refresh();
 	QCOMPARE(localFileInfo.ownerId(), getuid());
 	QCOMPARE(localFileInfo.groupId(), getgid());
 	// Should not be allowed
@@ -192,12 +194,88 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(stat(localFile.fileName().toUtf8().data(), &attr) == 0);
 	QCOMPARE(attr.st_mode, S_IFREG | 0600);
 
+	// Mount the data path
+	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));
+	QVERIFY(!dataPath.isEmpty());
+	cmd = QStringLiteral("MOUNT file://%1").arg(dataPath).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString mirrordataPath = QStringLiteral("%1/file%2").arg(m_mountDir.path(), dataPath);
+
+	// Verify the symlink inside is correct
+	QFile symlink(QDir(mirrordataPath).filePath(QStringLiteral("symlink")));
+
+	QVERIFY(symlink.open(QIODevice::ReadOnly));
+	QCOMPARE(symlink.readAll(), QStringLiteral("symlinktargetcontent").toUtf8());
+	QCOMPARE(symlink.symLinkTarget(), QDir(mirrordataPath).filePath(QStringLiteral("symlinktarget")));
+}
+
+void FileOpsTest::testLocalDirOps()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QVERIFY(mirrorDir.exists());
+
+	// Create a folder inside
+	QVERIFY(mirrorDir.mkdir(QStringLiteral("directory")));
+	QVERIFY(QFile::exists(localDir.filePath(QStringLiteral("directory"))));
+
+	// Compare file metadata
+	QFileInfo localDirInfo(localDir.path()),
+	          mirrorDirInfo(mirrorDir.path());
+
+	QCOMPARE(mirrorDirInfo.ownerId(), localDirInfo.ownerId());
+	QCOMPARE(mirrorDirInfo.groupId(), localDirInfo.groupId());
+	// Not supported by KIO
+	// QCOMPARE(mirroredFileInfo.metadataChangeTime(), localFileInfo.metadataChangeTime());
+	// KIO does not expose times with sub-second precision
+	QCOMPARE(mirrorDirInfo.lastModified(), roundDownToSecond(localDirInfo.lastModified()));
+	QCOMPARE(mirrorDirInfo.lastRead(), roundDownToSecond(localDirInfo.lastRead()));
+
+	// Test touching the file
+	QDateTime oldModified = localDirInfo.lastModified(),
+	          oldAccessed = localDirInfo.lastRead();
+
+	// KIO only supports 1s resolution :-/
+	QThread::sleep(1);
+
+	QCOMPARE(utimensat(AT_FDCWD, mirrorDir.path().toUtf8().data(), NULL, 0), 0);
+	localDirInfo.refresh();
+	mirrorDirInfo.refresh();
+	QVERIFY(oldModified < localDirInfo.lastModified());
+	QCOMPARE(localDirInfo.lastModified(), roundDownToSecond(mirrorDirInfo.lastModified()));
+	// Access time not supported on the remote side, so only check in the mirror
+	QVERIFY(oldAccessed < mirrorDirInfo.lastRead());
+	//QVERIFY(oldAccessed < localFileInfo.lastRead());
+
+	// Test chown by not changing anything (no CAP_CHOWN...)
+	QCOMPARE(chown(mirrorDir.path().toUtf8().data(), getuid(), getgid()), 0);
+	localDirInfo.refresh();
+	QCOMPARE(localDirInfo.ownerId(), getuid());
+	QCOMPARE(localDirInfo.groupId(), getgid());
+	// Should not be allowed
+	QCOMPARE(chown(mirrorDir.path().toUtf8().data(), getuid(), 0), -1);
+	QCOMPARE(chown(mirrorDir.path().toUtf8().data(), 0, getgid()), -1);
+
+	// Test chmod
+	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0054), 0);
+	struct stat attr;
+	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
+	QCOMPARE(attr.st_mode, S_IFDIR | 0054);
+	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0600), 0);
+	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
+	QCOMPARE(attr.st_mode, S_IFDIR | 0600);
+
 	// Mount the data path and compare the directory content
 	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));
 	QVERIFY(!dataPath.isEmpty());
 	cmd = QStringLiteral("MOUNT file://%1").arg(dataPath).toUtf8();
 	QCOMPARE(m_controlFile.write(cmd), cmd.length());
-
 	QString mirrordataPath = QStringLiteral("%1/file%2").arg(m_mountDir.path(), dataPath);
 
 	auto sourceEntryList = QDir(dataPath).entryList(QDir::NoFilter, QDir::Name);
@@ -210,12 +288,6 @@ void FileOpsTest::testLocalFileOps()
 	mirrorEntryList = QDir(QStringLiteral("%1/file").arg(m_mountDir.path())).entryList(QDir::NoFilter, QDir::Name);
 
 	QCOMPARE(mirrorEntryList, sourceEntryList);
-
-	QFile symlink(QDir(dataPath).filePath(QStringLiteral("symlink")));
-
-	QVERIFY(symlink.open(QIODevice::ReadOnly));
-	QCOMPARE(symlink.readAll(), QStringLiteral("symlinktargetcontent").toUtf8());
-	QCOMPARE(symlink.symLinkTarget(), QDir(dataPath).filePath(QStringLiteral("symlinktarget")));
 }
 
 void FileOpsTest::testCreationOps()
