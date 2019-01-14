@@ -1104,7 +1104,7 @@ fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node)
 {
 	// Allocate a free inode number
 	fuse_ino_t ino = m_nextIno;
-	while(m_nodes.find(ino) != m_nodes.end())
+	while(ino == KIOFuseIno::Invalid || m_nodes.find(ino) != m_nodes.end())
 		ino++;
 
 	m_nextIno = ino + 1;
