@@ -1,14 +1,196 @@
-Single-threaded dispatch:
-- KIO can only dispatch in the main event loop's thread anyway
-- It's impossible to keep a node's lookup count otherwise:
-  https://github.com/python-llfuse/python-llfuse/blob/master/developer-notes/lookup_counts.rst
-- Integrates well with the Qt main loop
-- Avoids expensive and complicated locking
+Design of kio-fuse
+==================
 
-Lowlevel API:
-- Asynchronous
-- Can access files without having to call readdir on all path elements
-  (necessary for HTTP, makes other slaves quicker)
-- Lets the FUSE daemon implement unlinking properly. With the high-level API,
-  calling unlink on a still opened file results in a rename(..., ".fuse_hiddenXXX") instead,
-  which is undesirable
+This file explains the internal implementation only, please read the README
+first to learn about the external interface.
+
+Goals
+-----
+
+kio-fuse's design is based on these requirements:
+* Maximum compatibility with applications (as far as KIO allows)
+* Work with most slaves: The minimum set of operations a slave must support are
+  KIO::stat and KIO::get
+* Good usability: This means mostly acceptable speed (using caching whereever
+  possible), but also having a simple API to the outside world
+* Security: The password of mounted URLs is not obviously visible
+* KISS
+
+Use of the libfuse lowlevel API
+-------------------------------
+
+Compared to the "old" version of kiofuse in SVN, this implementation has a
+major difference in the implementation: Instead of the high level libfuse API,
+which translates the inode numbers passed from the kernel to paths for calling
+the operations, the lowlevel libfuse API is used.
+
+While it may look like translating path to URLs is much easier than keeping
+track of inode numbers, the high-level API has actually completely different
+behaviour in many other ways, which actually makes it much more complex to use.
+The most important difference is that the lowlevel API can be used
+asynchronously, which makes it possible to process multiple requests in one
+thread. This matches the Qt (and thus KIO) event processing model perfectly.
+This means that multithreading is not required (KIO works on the main thread
+anyway), resulting in no need for locking and passing queues around.
+
+Additonally, a design flaw in libfuse means that it's impossible to keep track
+of the lookup count correctly/race-free when using multiple threads:
+https://github.com/python-llfuse/python-llfuse/blob/master/developer-notes/lookup_counts.rst
+
+The additional "lookup" lowlevel operation makes it possible to avoid calling
+readdir on all path elements when opening a file for the first time.
+Example: "smb://host/dir/subdir/file" is mounted as smb/host/dir/subdir/file.
+When opening that for the first time with the high-level API, it would result in
+thses calls: opendir(/) -> readdir(/) -> closedir(/) -> opendir(smb) -> ...
+This is because libfuse has to build an internal tree model for mapping inode
+numbers to path elements.
+With the lowlevel API, lookup is enough: lookup(/, smb) -> lookup(smb, host)...
+This means it's enough to run KIO::stat on the mounted URL itself as all path
+elements are known to be existing directories.
+
+Not using inode numbers in the high-level API means that implementing unlink
+properly (i.e. already opened file handles are still valid) is not possible,
+so instead of calling unlink directly, libfuse renames deleted files as
+".fuse_hiddenXXX" and deletes them when their lookup count drops to zero.
+By using the lowlevel API, implementing deletion is up to the filesystem.
+
+The VFS node tree
+-----------------
+
+Downside of the lowlevel API is that the inode number -> path mapping has to be
+implemented by the filesystem. For implementing local caching of nodes having
+a tree structure is necessary anyway though, so this does not actually make it
+more complex.
+
+The tree is implemented as a std::unordered_map of fuse_ino_t to KIOFuseNode.
+Each node knows about its parent and children inode numbers. The two root nodes
+have an invalid inode number (0) set as parent.
+For details on the class hierarchy and their members, read kiofusenode.h.
+
+For carrying out special operations depending on the node type, either the
+node's virtual type method is called or RTTI is queried using dynamic_cast.
+
+During runtime, the tree can look like this:
+
+"" (ino: 1)             "_control" (ino: 3)
+KIOFuseRootNode ----->  KIOFuseControlNode
+    |
+	|        "smb"
+	|------> KIOFuseProtocolNode
+	|    	   \
+	|    		\        "user@fileserver01"       "a file"
+	|    		 ------> KIOFuseOriginNode  -----> KIOFuseRemoteFileNode
+	|                    "user:pass@fileserver01"
+	|    					 \
+	|    					  \        "directory"
+	|    					   ------> KIOFuseRemoteDirNode
+	|    								   \
+	|    									\        "another file"
+	|    									 ------> KIOFuseRemoteFileNode
+	|
+	|       "sftp"
+	------> KIOFuseProtocolNode
+	        \
+			 \        "user@someserver"         "a file"
+			  ------> KIOFuseOriginNode  -----> KIOFuseRemoteFileNode
+			          "user:pass@someserver"
+
+"" (ino: 2)           "deleted file"
+KIOFuseRootNode ----> KIOFuseRemoteFileNode
+
+The root node with inode number 1 represents the root of the VFS.
+Only files below are visible in the VFS hierarchy.
+
+Each KIOFuseOriginNode stores the full URL (with password) internally, but the
+node's name contains only the username and host.
+
+Unlinking a node
+----------------
+
+The root node with inode number 2 is used as a parent for deleted, but still
+opened (non-zero lookup count) nodes. This is used for proper unlinking.
+When the loopup count of a node below the "deleted root" drops to zero, the
+node is deleted, i.e. the inode number can be reused and memory is freed.
+When unlinking a node which already has a lookup count of zero, it is directly
+deleted.
+
+General anatomy of a write operation
+------------------------------------
+
+All write operations are implemented by verifying the parameters locally (if
+possible at all) and then starting the operation to KIO. Once the operation
+completes, either an error is sent or the change is done in the local VFS tree
+and the result is sent.
+
+void KIOFuseVFS::operation(fuse_req_t req, fuse_ino_t inode, ...)
+{
+    KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	auto node = that->nodeForIno(parent);
+	if(!node) complain and return;
+
+    auto job = KIO::operation(that->remoteUrl(node), ...);
+	connect(job, &finished, [=](int error) {
+	    if(error)
+		    fuse_reply_err(req, EIO);
+		else
+		{
+		    that->doOperation(node);
+			fuse_reply_result(req, ...);
+		}
+		});
+}
+
+Permissions
+-----------
+
+While the st_uid/st_gid/st_mode fields of nodes are used from KIO if possible,
+access is not checked by kio-fuse at all. Instead, KIO returns errors if an
+operation fails because of missing permissions and those are simply forwarded.
+
+Node attributes
+---------------
+
+For every node in the VFS, the full struct stat is already available when
+inserting it into the tree. This happens when mounting a URL (uses KIO::stat)
+and when requesting the children of a URL (using KIO::listDir with details).
+The same is true of a symlink's target.
+
+As a result, getattr and readlink are non-blocking.
+setattr instead does block, it only returns if all of the requested operations
+(e.g. SET_ATTR_MTIME, SET_ATTR_MODE, SET_ATTR_UID) completed.
+
+Directory operations
+--------------------
+
+To support the optimization possibility the lookup operation in the lowlevel
+API offers, children of KIOFuseRemoteDirNode are loaded lazily. This means
+that the full list of children is only requested (using KIO::listDir) if
+required, so if lookup on the directory fails or if readdir is executed.
+
+This is implemented using bool m_childrenComplete and the
+waitUntilChildrenComplete method in KIOFuseVFS.
+
+File IO
+-------
+
+File IO is implemented completely on top of a file based cache.
+On the first read or write access to a non truncated file, the whole file is
+downloaded into a new temporary file and all readers are notified on cache
+completeness changes (see waitUntilBytesAvailable).
+
+Therefore the read and write ops itself are trivial, they just forward the
+IO operation to the temporary file once enough data is available.
+
+On each write to a file, the file is marked as dirty and added to the set
+of dirty nodes. On various occasions, flushRemoteNode is called which removes
+the node from the dirty set and start a KIO::put for the file. On success,
+the flushed cache generation is saved in the node.
+
+Hardlinks
+---------------
+
+Hardlinks are not supported well in the current design of KIO so they were
+simply not considered during kio-fuse development either.
+
+While inode and device numbers can be returned are part of UDSEntries returned
+from slaves, neither stat.st_link nor ::link are accessible.

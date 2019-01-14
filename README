@@ -1,0 +1,31 @@
+How to use kio-fuse
+===================
+
+Building
+--------
+
+Very simple: Install fuse3 and KIO, run cmake, make and you're done!
+
+Running
+-------
+
+Create a new directory somewhere, make sure that no daemon is going to clean
+up after it (like systemd-tmpfiles in /run/user/...) and run kio-fuse -d $dir.
+The "-d" means that it shows debug output and does not daemonize - that makes
+it easier to use it at first.
+
+In the directory you'll find a new empty file _control which is used to send
+commands to kio-fuse. Let's assume you want to make the files at
+ftp://user:password@server/directory accessible in your local file system.
+To send the corresponding mount command, run
+
+echo "MOUNT ftp://user:password@server/directory" >> $dir/_control
+
+If it failed, kio-fuse wrote the error message returned by kio into your
+terminal. If it succeeded, you won't see any output and the hierarchy is
+accessible at $dir/ftp/user@server/directory.
+
+After your work is done, simply run "fusermount -u $dir" to unmount the URL and
+exit kio-fuse.
+
+Have a lot of fun!
