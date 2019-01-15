@@ -182,14 +182,15 @@ void KIOFuseVFS::stop()
 
 		++it; // Increment now as flushRemoteNode invalidates the iterator
 
-		if(!node || node->cacheIsDirty())
+		if(!node || (!node->m_cacheDirty && !node->m_flushRunning))
 		{
 			qWarning(KIOFUSE_LOG) << "Broken inode in dirty set";
 			continue;
 		}
 
 		auto lockerPointer = std::make_shared<QEventLoopLocker>(&loop);
-		flushRemoteNode(node, [lp = std::move(lockerPointer)](int error) {
+		// Trigger or wait until flush done.
+		awaitNodeFlushed(node, [lp = std::move(lockerPointer)](int error) {
 			if(error)
 				qWarning(KIOFUSE_LOG) << "Failed to flush node";
 		});
@@ -364,7 +365,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			// Have to wait until the cache is complete to truncate.
 			// Waiting until all bytes up to the truncation point are available won't work,
 			// as the fetch function would just overwrite the cache.
-			that->waitUntilBytesAvailable(remoteFileNode, SIZE_MAX, [=](int error) {
+			that->awaitBytesAvailable(remoteFileNode, SIZE_MAX, [=](int error) {
 				if(error && error != ESPIPE)
 					sharedState->error = error;
 				else // Cache complete!
@@ -799,7 +800,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		return;
 	}
 
-	that->waitUntilChildrenComplete(dirNode, [=](int error){
+	that->awaitChildrenComplete(dirNode, [=](int error){
 		if(error)
 		{
 			fuse_reply_err(req, error);
@@ -859,7 +860,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-		that->waitUntilBytesAvailable(remoteNode, off + size, [=](int error) {
+		that->awaitBytesAvailable(remoteNode, off + size, [=](int error) {
 			if(error != 0 && error != ESPIPE)
 			{
 				fuse_reply_err(req, error);
@@ -935,7 +936,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 	{
 		QByteArray data(buf, size); // Copy data
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-		that->waitUntilBytesAvailable(remoteNode, off + size, [=](int error) {
+		that->awaitBytesAvailable(remoteNode, off + size, [=](int error) {
 			if(error && error != ESPIPE)
 			{
 				fuse_reply_err(req, error);
@@ -986,7 +987,7 @@ void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_i
 		return;
 	}
 
-	that->flushRemoteNode(remoteNode, [=](int error) {
+	that->awaitNodeFlushed(remoteNode, [=](int error) {
 		fuse_reply_err(req, error);
 	});
 }
@@ -1043,7 +1044,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	}
 
 	// Not found - try again
-	that->waitUntilChildrenComplete(std::dynamic_pointer_cast<KIOFuseDirNode>(parentNode), [=](int error) {
+	that->awaitChildrenComplete(std::dynamic_pointer_cast<KIOFuseDirNode>(parentNode), [=](int error) {
 		if(error)
 		{
 			fuse_reply_err(req, error);
@@ -1332,7 +1333,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	}
 }
 
-void KIOFuseVFS::waitUntilBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, size_t bytes, std::function<void(int error)> callback)
+void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, size_t bytes, std::function<void(int error)> callback)
 {
 	if(node->m_localCache && node->m_cacheSize >= bytes)
 		return callback(0); // Already available
@@ -1404,7 +1405,7 @@ void KIOFuseVFS::waitUntilBytesAvailable(const std::shared_ptr<KIOFuseRemoteFile
 	);
 }
 
-void KIOFuseVFS::waitUntilChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void (int)> callback)
 {
 	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(node);
 	if(!remoteNode)
@@ -1626,10 +1627,10 @@ void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &no
 	m_dirtyNodes.insert(node->m_stat.st_ino);
 }
 
-void KIOFuseVFS::flushRemoteNode(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void (int)> callback)
 {
-	if(!node->cacheIsDirty())
-		return callback(0);
+	if(!node->m_cacheDirty && !node->m_flushRunning)
+		return callback(0); // Nothing to flush/wait for
 
 	if(node->m_parentIno == KIOFuseIno::DeletedRoot)
 	{
@@ -1642,53 +1643,76 @@ void KIOFuseVFS::flushRemoteNode(const std::shared_ptr<KIOFuseRemoteFileNode> &n
 	if(!node->cacheIsComplete())
 	{
 		qDebug(KIOFUSE_LOG) << "Deferring flushing of node" << node->m_nodeName << "until cache complete";
-		return waitUntilBytesAvailable(node, SIZE_MAX, [=](int error) {
+		return awaitBytesAvailable(node, SIZE_MAX, [=](int error) {
 			if(error)
 				callback(error);
 			else
-				flushRemoteNode(node, callback);
+				awaitNodeFlushed(node, callback);
 		});
 	}
 
-	qDebug(KIOFUSE_LOG) << "Flushing node" << node->m_nodeName;
+	if(!node->m_flushRunning)
+	{
+		qDebug(KIOFUSE_LOG) << "Flushing node" << node->m_nodeName;
 
-	// Clear the flag now to not lose any writes that happen while sending data
-	node->m_cacheDirty = false;
-	m_dirtyNodes.extract(node->m_stat.st_ino);
+		// Clear the flag now to not lose any writes that happen while sending data
+		node->m_cacheDirty = false;
+		node->m_flushRunning = true;
 
-	auto *job = KIO::put(remoteUrl(node), node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
-	job->setTotalSize(node->m_cacheSize);
+		auto *job = KIO::put(remoteUrl(node), node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
+		job->setTotalSize(node->m_cacheSize);
 
-	size_t bytesSent = 0; // Modified inside the lambda
-	connect(job, &KIO::TransferJob::dataReq, [=](auto *job, QByteArray &data) mutable {
-		Q_UNUSED(job);
+		size_t bytesSent = 0; // Modified inside the lambda
+		connect(job, &KIO::TransferJob::dataReq, [=](auto *job, QByteArray &data) mutable {
+			Q_UNUSED(job);
 
-		// Someone truncated the file?
-		if(node->m_cacheSize <= bytesSent)
-			return;
+			// Someone truncated the file?
+			if(node->m_cacheSize <= bytesSent)
+				return;
 
-		size_t toSend = std::min(node->m_cacheSize - bytesSent, 1024*1024ul); // 1MiB max
-		data.resize(toSend);
+			size_t toSend = std::min(node->m_cacheSize - bytesSent, 1024*1024ul); // 1MiB max
+			data.resize(toSend);
 
-		// Read the cache file into the buffer
-		if(fseek(node->m_localCache, bytesSent, SEEK_SET) == -1
-		   || !sane_fread(data.data(), toSend, node->m_localCache))
-		{
-			qWarning(KIOFUSE_LOG) << "Failed to read cache:" << strerror(errno);
-			job->kill(KJob::EmitResult);
-			return;
-		}
+			// Read the cache file into the buffer
+			if(fseek(node->m_localCache, bytesSent, SEEK_SET) == -1
+			   || !sane_fread(data.data(), toSend, node->m_localCache))
+			{
+				qWarning(KIOFUSE_LOG) << "Failed to read cache:" << strerror(errno);
+				job->kill(KJob::EmitResult);
+				return;
+			}
 
-		bytesSent += toSend;
-	});
-	connect(job, &KIO::TransferJob::result, [=] {
-		if(job->error())
-		{
-			qWarning(KIOFUSE_LOG) << "Failed to send data:" << job->errorString();
-			markCacheDirty(node); // Try again
-			return callback(EIO);
-		}
+			bytesSent += toSend;
+		});
+		connect(job, &KIO::TransferJob::result, [=] {
+			node->m_flushRunning = false;
 
-		callback(0);
-	});
+			if(job->error())
+			{
+				qWarning(KIOFUSE_LOG) << "Failed to send data:" << job->errorString();
+				markCacheDirty(node); // Try again
+				emit node->cacheFlushed(EIO);
+				return;
+			}
+
+			if(!node->m_cacheDirty)
+			{
+				// Nobody wrote to the cache while sending data
+				m_dirtyNodes.extract(node->m_stat.st_ino);
+				emit node->cacheFlushed(0);
+			}
+			else
+				awaitNodeFlushed(node, [](int){});
+		});
+	}
+
+	// Using a unique_ptr here to let the lambda disconnect the connection itself
+	auto connection = std::make_unique<QMetaObject::Connection>();
+	auto &conn = *connection;
+	conn = connect(node.get(), &KIOFuseRemoteFileNode::cacheFlushed,
+	               [=, connection = std::move(connection)](int error) {
+		callback(error);
+		node->disconnect(*connection);
+	}
+	);
 }

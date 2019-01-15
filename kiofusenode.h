@@ -140,14 +140,16 @@ public:
 	bool cacheIsComplete() { return m_localCache && m_cacheSize == size_t(m_stat.st_size); }
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
 	size_t m_cacheSize = 0; // Size of the local cache - might be less than m_stat.st_size.
-	bool cacheIsDirty() { return m_cacheDirty; }
-	int m_cacheDirty = false; // Set on every write to m_localCache
+	int m_cacheDirty = false, // Set on every write to m_localCache, cleared when a flush starts
+	    m_flushRunning = false; // If a flush is currently running
 
 	// Override the URL (used for UDS_URL)
 	QUrl m_overrideUrl;
 Q_SIGNALS:
 	// Emitted when a download operation on this node made progress, finished or failed.
 	void localCacheChanged(int error);
+	// Emitted after finishing (successful or not) a cache flush on this node
+	void cacheFlushed(int error);
 };
 
 class KIOFuseSymLinkNode : public QObject, public KIOFuseNode {
