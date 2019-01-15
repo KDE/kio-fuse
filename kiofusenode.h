@@ -43,7 +43,6 @@ public:
 	enum class NodeType {
 		// Dir types
 		RootNode,
-		DeletedRootNode,
 		ProtocolNode,
 		OriginNode,
 		RemoteDirNode,
@@ -76,13 +75,6 @@ class KIOFuseRootNode : public KIOFuseDirNode {
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
 	static const NodeType Type = NodeType::RootNode;
-	NodeType type() const override { return Type; }
-};
-
-class KIOFuseDeletedRootNode : public KIOFuseDirNode {
-public:
-	using KIOFuseDirNode::KIOFuseDirNode;
-	static const NodeType Type = NodeType::DeletedRootNode;
 	NodeType type() const override { return Type; }
 };
 
