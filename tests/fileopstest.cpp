@@ -27,7 +27,6 @@
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTest>
-#include <QThread>
 
 class FileOpsTest : public QObject
 {
@@ -131,20 +130,16 @@ void FileOpsTest::testLocalFileOps()
 	QCOMPARE(mirroredFileInfo.lastRead(), roundDownToSecond(localFileInfo.lastRead()));
 
 	// Test touching the file
-	QDateTime oldModified = localFileInfo.lastModified(),
-	          oldAccessed = localFileInfo.lastRead();
-
-	// KIO only supports 1s resolution :-/
-	QThread::sleep(1);
-
-	QCOMPARE(futimens(mirroredFile.handle(), NULL), 0);
+	struct timespec times[2] = {{localFileInfo.lastModified().toSecsSinceEpoch() + 42, 0},
+	                            {localFileInfo.lastRead().toSecsSinceEpoch() + 1, 0}};
+	QCOMPARE(futimens(mirroredFile.handle(), times), 0);
 	localFileInfo.refresh();
 	mirroredFileInfo.refresh();
-	QVERIFY(oldModified < localFileInfo.lastModified());
-	QCOMPARE(localFileInfo.lastModified(), roundDownToSecond(mirroredFileInfo.lastModified()));
+	QCOMPARE(mirroredFileInfo.lastModified().toSecsSinceEpoch(), times[1].tv_sec);
+	QCOMPARE(localFileInfo.lastModified().toSecsSinceEpoch(), times[1].tv_sec);
 	// Access time not supported on the remote side, so only check in the mirror
-	QVERIFY(oldAccessed < mirroredFileInfo.lastRead());
-	//QVERIFY(oldAccessed < localFileInfo.lastRead());
+	QCOMPARE(mirroredFileInfo.lastRead().toSecsSinceEpoch(), times[0].tv_sec);
+	//QCOMPARE(localFileInfo.lastRead().toSecsSinceEpoch(), times[0].tv_sec);
 
 	// Compare the content
 	QVERIFY(localFile.seek(0));
@@ -258,20 +253,16 @@ void FileOpsTest::testLocalDirOps()
 	QCOMPARE(mirrorDirInfo.lastRead(), roundDownToSecond(localDirInfo.lastRead()));
 
 	// Test touching the file
-	QDateTime oldModified = localDirInfo.lastModified(),
-	          oldAccessed = localDirInfo.lastRead();
-
-	// KIO only supports 1s resolution :-/
-	QThread::sleep(1);
-
-	QCOMPARE(utimensat(AT_FDCWD, mirrorDir.path().toUtf8().data(), NULL, 0), 0);
+	struct timespec times[2] = {{localDirInfo.lastModified().toSecsSinceEpoch() + 42, 0},
+	                            {localDirInfo.lastRead().toSecsSinceEpoch() + 1, 0}};
+	QCOMPARE(utimensat(AT_FDCWD, mirrorDir.path().toUtf8().data(), times, 0), 0);
 	localDirInfo.refresh();
 	mirrorDirInfo.refresh();
-	QVERIFY(oldModified < localDirInfo.lastModified());
-	QCOMPARE(localDirInfo.lastModified(), roundDownToSecond(mirrorDirInfo.lastModified()));
+	QCOMPARE(mirrorDirInfo.lastModified().toSecsSinceEpoch(), times[1].tv_sec);
+	QCOMPARE(localDirInfo.lastModified().toSecsSinceEpoch(), times[1].tv_sec);
 	// Access time not supported on the remote side, so only check in the mirror
-	QVERIFY(oldAccessed < mirrorDirInfo.lastRead());
-	//QVERIFY(oldAccessed < localFileInfo.lastRead());
+	QCOMPARE(mirrorDirInfo.lastRead().toSecsSinceEpoch(), times[0].tv_sec);
+	//QCOMPARE(localDirInfo.lastRead().toSecsSinceEpoch(), times[0].tv_sec);
 
 	// Test chown by not changing anything (no CAP_CHOWN...)
 	QCOMPARE(chown(mirrorDir.path().toUtf8().data(), getuid(), getgid()), 0);
@@ -287,9 +278,9 @@ void FileOpsTest::testLocalDirOps()
 	struct stat attr;
 	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
 	QCOMPARE(attr.st_mode, S_IFDIR | 0054);
-	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0600), 0);
+	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0700), 0);
 	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
-	QCOMPARE(attr.st_mode, S_IFDIR | 0600);
+	QCOMPARE(attr.st_mode, S_IFDIR | 0700);
 
 	// Mount the data path and compare the directory content
 	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));
