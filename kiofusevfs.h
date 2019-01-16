@@ -90,6 +90,7 @@ private:
 	static void write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 	                  size_t size, off_t off, struct fuse_file_info *fi);
 	static void flush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
+	static void release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void fsync(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info *fi);
 
 	/** Returns a pointer to a child node of parent with m_nodeName == name or nullptr. */
@@ -129,7 +130,7 @@ private:
 	void awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void(int error)> callback);
 	/** Marks a node's cache as dirty and add it to m_dirtyNodes. */
 	void markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &node);
-	/** Triggers a cache flush if not already running and calls callback once the node is not dirty anymore.
+	/** Calls the callback once the cache is not dirty anymore (no cache counts as clean as well).
 	  * If writes happen while a flush is sending data, a flush will be retriggered. */
 	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void(int error)> callback);
 

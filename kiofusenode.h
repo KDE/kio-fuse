@@ -57,14 +57,15 @@ public:
 	// this is "for free" - the vtable ptr is enough
 	virtual NodeType type() const = 0;
 
-	uint64_t m_lookupCount = 0;
+	uint64_t m_lookupCount = 0, // This counts how many references to this node the kernel has
+	         m_openCount = 0; // This counts how often the kernel has this node opened
 	fuse_ino_t m_parentIno;
 	QString m_nodeName;
 	// TODO: nlink of directories (./..)?
 	struct stat m_stat;
 };
 
-// Virtual base class for all nodes representing a directory
+// Base class for all nodes representing a directory
 class KIOFuseDirNode : public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
@@ -124,10 +125,11 @@ public:
 	static const NodeType Type = NodeType::RemoteFileNode;
 	NodeType type() const override { return Type; }
 	// Cache information
-	bool cacheIsComplete() { return m_localCache && m_cacheSize == size_t(m_stat.st_size); }
+	bool cacheIsComplete() { return m_cacheComplete; }
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
 	size_t m_cacheSize = 0; // Size of the local cache - might be less than m_stat.st_size.
-	int m_cacheDirty = false, // Set on every write to m_localCache, cleared when a flush starts
+	int m_cacheComplete = false,
+	    m_cacheDirty = false, // Set on every write to m_localCache, cleared when a flush starts
 	    m_flushRunning = false; // If a flush is currently running
 
 	// Override the URL (used for UDS_URL)

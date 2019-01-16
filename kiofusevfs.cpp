@@ -57,6 +57,7 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.read = &KIOFuseVFS::read,
 	.write = &KIOFuseVFS::write,
 	.flush = &KIOFuseVFS::flush,
+	.release = &KIOFuseVFS::release,
 	.fsync = &KIOFuseVFS::fsync,
 	.readdir = &KIOFuseVFS::readdir,
 };
@@ -185,10 +186,7 @@ void KIOFuseVFS::stop()
 
 		auto lockerPointer = std::make_shared<QEventLoopLocker>(&loop);
 		// Trigger or wait until flush done.
-		awaitNodeFlushed(node, [lp = std::move(lockerPointer)](int error) {
-			if(error)
-				qWarning(KIOFUSE_LOG) << "Failed to flush node";
-		});
+		awaitNodeFlushed(node, [lp = std::move(lockerPointer)](int) {});
 
 		needEventLoop = true;
 	}
@@ -319,6 +317,13 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			{
 				// Just create an empty file
 				remoteFileNode->m_localCache = tmpfile();
+				if(remoteFileNode->m_localCache == nullptr)
+				{
+					fuse_reply_err(req, EIO);
+					return;
+				}
+
+				remoteFileNode->m_cacheComplete = true;
 				remoteFileNode->m_cacheSize = remoteFileNode->m_stat.st_size = 0;
 				that->markCacheDirty(remoteFileNode);
 
@@ -689,8 +694,18 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 
 void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 {
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	auto node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
 	if(ino == KIOFuseIno::Control)
 		fi->direct_io = true; // Necessary to get each command directly
+
+	node->m_openCount += 1;
 
 	fuse_reply_open(req, fi);
 }
@@ -964,6 +979,48 @@ void KIOFuseVFS::flush(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 	return KIOFuseVFS::fsync(req, ino, 1, fi);
 }
 
+void KIOFuseVFS::release(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
+{
+	Q_UNUSED(fi);
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	auto node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	node->m_openCount -= 1;
+
+	fuse_reply_err(req, 0); // Ignored anyway
+
+	auto remoteFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
+	if(node->m_openCount || !remoteFileNode || !remoteFileNode->m_localCache)
+		return; // Nothing to do
+
+	// When the cache is not dirty, remove the cache file.
+	that->awaitNodeFlushed(remoteFileNode, [=](int error) {
+		if(error != 0 || node->m_openCount != 0)
+			return; // Better not remove the cache
+		if(remoteFileNode->m_localCache == nullptr)
+			return; // Already removed (happens if the file was reopened and closed while flushing)
+		if(!remoteFileNode->cacheIsComplete())
+			return; // Currently filling
+
+		if(remoteFileNode->m_cacheDirty || remoteFileNode->m_flushRunning)
+		{
+			qWarning(KIOFUSE_LOG) << "Node turned dirty in flush callback";
+			return;
+		}
+
+		qDebug(KIOFUSE_LOG) << "Removing cache of" << remoteFileNode->m_nodeName;
+		fclose(remoteFileNode->m_localCache);
+		remoteFileNode->m_cacheSize = 0;
+		remoteFileNode->m_localCache = nullptr;
+		remoteFileNode->m_cacheComplete = false;
+	});
+}
+
 void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_info *fi)
 {
 	Q_UNUSED(datasync); Q_UNUSED(fi);
@@ -1132,12 +1189,14 @@ fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node, fuse
 	// Adjust internal ino
 	node->m_stat.st_ino = ino;
 
-	// Add to parent's child
-	auto parentNodeIt = m_nodes.find(node->m_parentIno);
-	if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
-		std::dynamic_pointer_cast<KIOFuseDirNode>(parentNodeIt->second)->m_childrenInos.push_back(ino);
-	else
-		qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
+	if(node->m_parentIno != KIOFuseIno::Invalid)
+	{
+		// Add to parent's child
+		if(auto parentDir = std::dynamic_pointer_cast<KIOFuseDirNode>(nodeForIno(node->m_parentIno)))
+			parentDir->m_childrenInos.push_back(ino);
+		else
+			qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
+	}
 
 	return ino;
 }
@@ -1347,6 +1406,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 			return callback(errno);
 
 		// Request the file
+		qDebug(KIOFUSE_LOG) << "Fetching cache for" << node->m_nodeName;
 		auto *job = KIO::get(remoteUrl(node));
 		connect(job, &KIO::TransferJob::data, [=](auto *job, const QByteArray &data) {
 			Q_UNUSED(job);
@@ -1363,7 +1423,13 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 		connect(job, &KIO::TransferJob::result, [=] {
 			if(job->error())
 			{
+				// It's possible that the cache was written to meanwhile - that's bad.
+				// TODO: Is it possible to recover?
+				node->m_cacheDirty = false;
+
 				fclose(node->m_localCache);
+				node->m_cacheSize = false;
+				node->m_cacheComplete = false;
 				node->m_localCache = nullptr;
 				emit node->localCacheChanged(EIO);
 			}
@@ -1372,6 +1438,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 				// Might be different from the attr size meanwhile, use the more recent value.
 				// This also ensures that the cache is seen as complete.
 				node->m_stat.st_size = node->m_cacheSize;
+				node->m_cacheComplete = true;
 				emit node->localCacheChanged(0);
 			}
 		});
@@ -1387,8 +1454,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 			callback(error);
 			node->disconnect(*connection);
 		}
-
-		if(node->m_cacheSize >= bytes) // Requested data available
+		else if(node->m_cacheSize >= bytes) // Requested data available
 		{
 			callback(0);
 			node->disconnect(*connection);
@@ -1399,6 +1465,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 			callback(ESPIPE);
 			node->disconnect(*connection);
 		}
+		// else continue waiting until the above happens
 	}
 	);
 }

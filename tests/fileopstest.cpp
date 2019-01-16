@@ -172,6 +172,17 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(mirroredFile.seek(0));
 	QCOMPARE(localFile2.readAll(), mirroredFile.readAll());
 
+	// Write new data, but close the file instead of flushing
+	QVERIFY(mirroredFile.seek(0));
+	QCOMPARE(mirroredFile.write(QStringLiteral("differentteststring").toUtf8()), 19);
+	mirroredFile.close();
+	localFile2.close();
+	QVERIFY(localFile2.open(QIODevice::ReadOnly));
+	QVERIFY(localFile2.seek(0));
+	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
+	QVERIFY(mirroredFile.seek(0));
+	QCOMPARE(localFile2.readAll(), QStringLiteral("differentteststring").toUtf8());
+
 	// Test truncation at open
 	mirroredFile.close();
 	QVERIFY(mirroredFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
