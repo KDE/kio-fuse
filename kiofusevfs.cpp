@@ -320,6 +320,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				if(remoteFileNode->m_localCache == nullptr)
 				{
 					fuse_reply_err(req, EIO);
+					// Some part of the operation might've succeeded though, inform the kernel about that
+					that->sendNotifyInvalEntry(remoteFileNode);
 					return;
 				}
 
