@@ -354,7 +354,11 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			if(!sharedState->to_set_remaining)
 			{
 				if(sharedState->error)
+				{
 					fuse_reply_err(req, sharedState->error);
+					// Some part of the operation might've succeeded though, inform the kernel about that
+					that->sendNotifyInvalEntry(remoteFileNode);
+				}
 				else
 					replyAttr(req, node);
 			}
@@ -1295,6 +1299,12 @@ void KIOFuseVFS::replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 
 	// TODO: Validity timeout?
 	fuse_reply_attr(req, &node->m_stat, 1);
+}
+
+void KIOFuseVFS::sendNotifyInvalEntry(std::shared_ptr<KIOFuseNode> node)
+{
+	auto name = node->m_nodeName.toUtf8();
+	fuse_lowlevel_notify_inval_entry(m_fuseSession, node->m_parentIno, name.data(), name.size());
 }
 
 std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride)
