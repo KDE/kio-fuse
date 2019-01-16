@@ -359,7 +359,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				{
 					fuse_reply_err(req, sharedState->error);
 					// Some part of the operation might've succeeded though, inform the kernel about that
-					that->sendNotifyInvalEntry(remoteFileNode);
+					that->sendNotifyInvalEntry(node);
 				}
 				else
 					replyAttr(req, node);
