@@ -98,8 +98,9 @@ private:
 	std::shared_ptr<KIOFuseNode> nodeForIno(const fuse_ino_t ino) const;
 	/** Removes the node from the old parent's children list (if any) and adds it to the new parent's list.*/
 	void reparentNode(const std::shared_ptr<KIOFuseNode> &node, fuse_ino_t newParentIno);
-	/** Allocates a new inode number, adds node into m_nodes and adds it to the node parent's children list. */
-	fuse_ino_t insertNode(const std::shared_ptr<KIOFuseNode> &node);
+	/** Allocates a new inode number if not given, adds node into m_nodes
+	  * and adds it to the node parent's children list. */
+	fuse_ino_t insertNode(const std::shared_ptr<KIOFuseNode> &node, fuse_ino_t ino=KIOFuseIno::Invalid);
 
 	/** Returns the full url upwards until a OriginNode is hit.
 	  * If no OriginNode is found, an empty QUrl is returned. */

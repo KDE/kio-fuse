@@ -104,19 +104,14 @@ KIOFuseVFS::KIOFuseVFS(QObject *parent)
 	attr.st_mode = S_IFDIR | 0755;
 
 	auto root = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
-	root->m_stat.st_ino = KIOFuseIno::Root;
-	m_nodes[KIOFuseIno::Root] = root;
+	insertNode(root, KIOFuseIno::Root);
 
 	auto deletedRoot = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
-	deletedRoot->m_stat.st_ino = KIOFuseIno::DeletedRoot;
-	m_nodes[KIOFuseIno::DeletedRoot] = std::move(deletedRoot);
+	insertNode(deletedRoot, KIOFuseIno::DeletedRoot);
 
 	auto control = std::make_shared<KIOFuseControlNode>(KIOFuseIno::Root, QStringLiteral("_control"), attr);
-	control->m_stat.st_ino = KIOFuseIno::Control;
+	insertNode(control, KIOFuseIno::Control);
 	control->m_stat.st_mode = S_IFREG | 0400;
-
-	m_nodes[KIOFuseIno::Control] = std::move(control);
-	root->m_childrenInos.push_back(KIOFuseIno::Control);
 }
 
 KIOFuseVFS::~KIOFuseVFS()
@@ -818,7 +813,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 		for(auto ino : dirNode->m_childrenInos)
 		{
-			KIOFuseNode *child = that->m_nodes[ino].get();
+			auto child = that->nodeForIno(ino);
 			if(!child)
 			{
 				qWarning(KIOFUSE_LOG) << "Node" << node->m_nodeName << "references nonexistant child";
@@ -1121,14 +1116,16 @@ void KIOFuseVFS::reparentNode(const std::shared_ptr<KIOFuseNode> &node, fuse_ino
 	}
 }
 
-fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node)
+fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node, fuse_ino_t ino)
 {
-	// Allocate a free inode number
-	fuse_ino_t ino = m_nextIno;
-	while(ino == KIOFuseIno::Invalid || m_nodes.find(ino) != m_nodes.end())
-		ino++;
+	if(ino == KIOFuseIno::Invalid)
+	{
+		// Allocate a free inode number
+		while(ino == KIOFuseIno::Invalid || m_nodes.find(ino) != m_nodes.end())
+			ino++;
 
-	m_nextIno = ino + 1;
+		m_nextIno = ino + 1;
+	}
 
 	m_nodes[ino] = node;
 
@@ -1138,7 +1135,7 @@ fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node)
 	// Add to parent's child
 	auto parentNodeIt = m_nodes.find(node->m_parentIno);
 	if(parentNodeIt != m_nodes.end() && parentNodeIt->second->type() <= KIOFuseNode::NodeType::LastDirType)
-		dynamic_cast<KIOFuseDirNode*>(parentNodeIt->second.get())->m_childrenInos.push_back(ino);
+		std::dynamic_pointer_cast<KIOFuseDirNode>(parentNodeIt->second)->m_childrenInos.push_back(ino);
 	else
 		qWarning(KIOFUSE_LOG) << "Tried to insert node with invalid parent";
 
@@ -1488,7 +1485,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 
 		// Success - create an entry
 
-		auto rootNode = m_nodes[KIOFuseIno::Root];
+		auto rootNode = nodeForIno(KIOFuseIno::Root);
 		auto protocolNode = rootNode;
 
 		// Depending on whether the URL has an "authority" component or not,
