@@ -519,20 +519,9 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 
 		that->mountUrl(url, [=](auto node, int error) {
 			if(error)
-			{
 				fuse_reply_err(req, error);
-				return;
-			}
-
-			that->incrementLookupCount(node);
-
-			struct fuse_entry_param entry {};
-			entry.ino = node->m_stat.st_ino;
-			entry.attr_timeout = 1.0;
-			entry.entry_timeout = 1.0;
-			entry.attr = node->m_stat;
-
-			fuse_reply_entry(req, &entry);
+			else
+				that->replyEntry(req, node);
 		});
 	});
 }
@@ -566,20 +555,9 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 
 		that->mountUrl(url, [=](auto node, int error) {
 			if(error)
-			{
 				fuse_reply_err(req, error);
-				return;
-			}
-
-			that->incrementLookupCount(node);
-
-			struct fuse_entry_param entry {};
-			entry.ino = node->m_stat.st_ino;
-			entry.attr_timeout = 1.0;
-			entry.entry_timeout = 1.0;
-			entry.attr = node->m_stat;
-
-			fuse_reply_entry(req, &entry);
+			else
+				that->replyEntry(req, node);
 		});
 	});
 }
@@ -680,20 +658,9 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 
 		that->mountUrl(url, [=](auto node, int error) {
 			if(error)
-			{
 				fuse_reply_err(req, error);
-				return;
-			}
-
-			that->incrementLookupCount(node);
-
-			struct fuse_entry_param entry {};
-			entry.ino = node->m_stat.st_ino;
-			entry.attr_timeout = 1.0;
-			entry.entry_timeout = 1.0;
-			entry.attr = node->m_stat;
-
-			fuse_reply_entry(req, &entry);
+			else
+				that->replyEntry(req, node);
 		});
 	});
 }
@@ -1087,43 +1054,14 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	QString nodeName = QString::fromUtf8(name);
 
 	if(auto child = that->nodeByName(parentNode, nodeName))
-	{
-		// Found
-		that->incrementLookupCount(child);
-
-		struct fuse_entry_param entry {};
-		entry.ino = child->m_stat.st_ino;
-		entry.attr_timeout = 1.0;
-		entry.entry_timeout = 1.0;
-		entry.attr = child->m_stat;
-
-		fuse_reply_entry(req, &entry);
-		return;
-	}
+		return that->replyEntry(req, child);
 
 	// Not found - try again
 	that->awaitChildrenComplete(std::dynamic_pointer_cast<KIOFuseDirNode>(parentNode), [=](int error) {
 		if(error)
-		{
 			fuse_reply_err(req, error);
-			return;
-		}
-
-		// Zero means invalid entry. Compared to an ENOENT reply, the kernel can cache this.
-		struct fuse_entry_param entry {};
-
-		if(auto child = that->nodeByName(parentNode, nodeName))
-		{
-			// Found
-			that->incrementLookupCount(child);
-
-			entry.ino = child->m_stat.st_ino;
-			entry.attr_timeout = 1.0;
-			entry.entry_timeout = 1.0;
-			entry.attr = child->m_stat;
-		}
-
-		fuse_reply_entry(req, &entry);
+		else
+			that->replyEntry(req, that->nodeByName(parentNode, nodeName));
 	});
 }
 
@@ -1301,6 +1239,24 @@ void KIOFuseVFS::replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 
 	// TODO: Validity timeout?
 	fuse_reply_attr(req, &node->m_stat, 1);
+}
+
+void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
+{
+	// Zero means invalid entry. Compared to an ENOENT reply, the kernel can cache this.
+	struct fuse_entry_param entry {};
+
+	if(node)
+	{
+		incrementLookupCount(node);
+
+		entry.ino = node->m_stat.st_ino;
+		entry.attr_timeout = 1.0;
+		entry.entry_timeout = 1.0;
+		entry.attr = node->m_stat;
+	}
+
+	fuse_reply_entry(req, &entry);
 }
 
 void KIOFuseVFS::sendNotifyInvalEntry(std::shared_ptr<KIOFuseNode> node)

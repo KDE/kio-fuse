@@ -122,6 +122,9 @@ private:
 
 	/** Sends the node's attributes with fuse_reply_attr. */
 	static void replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node);
+	/** Sends the node entry with fuse_reply_entry and increments the lookup count.
+	  * Sends an empty entry if node is null.*/
+	void replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node);
 	/** Sends a notification with fuse_lowlevel_notify_inval_entry. */
 	void sendNotifyInvalEntry(std::shared_ptr<KIOFuseNode> node);
 
