@@ -1068,8 +1068,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 void KIOFuseVFS::forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 {
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
-	auto node = that->nodeForIno(ino);
-	if(node)
+	if(auto node = that->nodeForIno(ino))
 		that->decrementLookupCount(node, nlookup);
 
 	fuse_reply_none(req);

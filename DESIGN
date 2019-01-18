@@ -170,7 +170,7 @@ that the full list of children is only requested (using KIO::listDir) if
 required, so if lookup on the directory fails or if readdir is executed.
 
 This is implemented using bool m_childrenComplete and the
-waitUntilChildrenComplete method in KIOFuseVFS.
+awaitChildrenComplete method in KIOFuseVFS.
 
 File IO
 -------
@@ -178,18 +178,23 @@ File IO
 File IO is implemented completely on top of a file based cache.
 On the first read or write access to a non truncated file, the whole file is
 downloaded into a new temporary file and all readers are notified on cache
-completeness changes (see waitUntilBytesAvailable).
+completeness changes (see awaitBytesAvailable).
 
 Therefore the read and write ops itself are trivial, they just forward the
 IO operation to the temporary file once enough data is available.
 
 On each write to a file, the file is marked as dirty and added to the set
-of dirty nodes. On various occasions, flushRemoteNode is called which removes
+of dirty nodes. On various occasions, awaitNodeFlushed is called which removes
 the node from the dirty set and start a KIO::put for the file. On success,
-the flushed cache generation is saved in the node.
+it is checked whether a write occured during flushing and if so, another
+flush is started. This is repeated until the node was still marked as clean
+on finish.
+
+When there a no open file descriptors to a node anymore, the cache is flushed
+if necessary and then dropped.
 
 Hardlinks
----------------
+---------
 
 Hardlinks are not supported well in the current design of KIO so they were
 simply not considered during kio-fuse development either.
