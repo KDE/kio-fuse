@@ -24,7 +24,7 @@ major difference in the implementation: Instead of the high level libfuse API,
 which translates the inode numbers passed from the kernel to paths for calling
 the operations, the lowlevel libfuse API is used.
 
-While it may look like translating path to URLs is much easier than keeping
+While it may look like translating paths to URLs is much easier than keeping
 track of inode numbers, the high-level API has actually completely different
 behaviour in many other ways, which actually makes it much more complex to use.
 The most important difference is that the lowlevel API can be used
@@ -41,7 +41,7 @@ The additional "lookup" lowlevel operation makes it possible to avoid calling
 readdir on all path elements when opening a file for the first time.
 Example: "smb://host/dir/subdir/file" is mounted as smb/host/dir/subdir/file.
 When opening that for the first time with the high-level API, it would result in
-thses calls: opendir(/) -> readdir(/) -> closedir(/) -> opendir(smb) -> ...
+these calls: opendir(/) -> readdir(/) -> closedir(/) -> opendir(smb) -> ...
 This is because libfuse has to build an internal tree model for mapping inode
 numbers to path elements.
 With the lowlevel API, lookup is enough: lookup(/, smb) -> lookup(smb, host)...
@@ -185,7 +185,7 @@ IO operation to the temporary file once enough data is available.
 
 On each write to a file, the file is marked as dirty and added to the set
 of dirty nodes. On various occasions, awaitNodeFlushed is called which removes
-the node from the dirty set and start a KIO::put for the file. On success,
+the node from the dirty set and starts a KIO::put for the file. On success,
 it is checked whether a write occured during flushing and if so, another
 flush is started. This is repeated until the node was still marked as clean
 on finish.
