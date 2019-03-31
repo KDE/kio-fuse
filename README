@@ -4,7 +4,20 @@ How to use kio-fuse
 Building
 --------
 
-Very simple: Install fuse3 and KIO, run cmake, make and you're done!
+Very simple: Install build dependencies, run cmake, make and you're done!
+To run the tests, run "make test". There is nothing to install (yet).
+
+To install build dependencies on Arch Linux:
+
+    pacman -S base-devel fuse3 cmake extra-cmake-modules qt5base kio
+
+To install build dependencies on openSUSE Tumbleweed:
+
+    zypper install extra-cmake-modules 'cmake(KF5KIO)' 'pkgconfig(fuse3)' kio-devel 'cmake(Qt5Test)'
+
+To install build dependencies on Ubuntu 19.04:
+
+    apt install fuse3 libfuse3-dev build-essential cmake extra-cmake-modules pkg-config libkf5kio-dev
 
 Running
 -------
