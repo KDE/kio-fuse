@@ -1,3 +1,6 @@
+General:
+- Integration into KIO/Plasma
+Filesystem features:
 - opendir/readdir/releasedir could be more POSIX compliant by increasing the lookup count of
   children and storing a copy of childrenInos in fuse_file_info.
 - Install own signal handlers
@@ -7,14 +10,35 @@
   * ACLs (?)
   * interrupting requests (just killing the KIO Job would also break other requests for the
     same resource)
+- Refresh attributes of files/dirs and children of dirs after a while:
+  Currently directories are only listed once and files only stat'd once.
+  * Print a warning if a file with dirty cache got deleted? (renames can't be detected)
+- Umount support:
+  Might not even be necessary - except for the nodes in RAM it does not use any resources
+- Support changing the password for an existing mount
+KIO Slave support:
 - Deal with invalid size reporting slaves (http/gdrive/...)?
 - Deal with slaves which don't support stat (fonts/...)?
 - Fix kdeconnect:// to return all children in readdir and not just an incomplete list of broken
   links (or add a workaround?)
-- In awaitNodeFlushed kill KIO::put job if the cache got written to (?)
-- Refresh attributes of files/dirs and children of dirs after a while:
-- Verify that write access works before writing into the cache
-- Try to map KIO Job errors to fuse_reply_err
+Performance/usability improvements:
+- In awaitNodeFlushed kill KIO::put job if the cache got written to (?):
+  This means that if a byte is touched every few seconds, the cache might never get flushed,
+  that would need to be taken care of
+- Better error reporting:
+  * Currently any failure results in EIO. Map KIO Job errors to fuse_reply_err
+  * Flushing happens on close(), which can't report errors, so it might be a good idea to show
+    a notification to the user if it fails
 - Look into using KIO::read/KIO::write if possible:
   * Needs ::open to succeed, has state per slave (?)
-  * Does not support truncation, so ::put is still necessary
+  * Does not support truncation, so either a fallback to ::put or support in KIO is necessary
+- Improve usability with large files over a slow connection (e.g. VM disk images):
+  * Abort fetching files into the cache in release: If the file is closed, the cache can be thrown
+    away.
+  * Don't cache too large files - might DoS the system. Determining the mime type of a single VM disk
+    fills /tmp (or wherever nodes created with tmpfile() reside in). Those files are impractical
+	to handle without KIO::read/KIO::write.
+Bugfixes:
+- Check what happens with files >= 4GiB on 32-bit systems
+- Check whether write access works before writing into the cache:
+  Currently write access it not explicitly checked at all, possibly leading to data loss
