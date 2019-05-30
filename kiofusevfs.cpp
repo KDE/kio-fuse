@@ -414,7 +414,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				auto *job = KIO::chown(that->remoteUrl(node), newOwner, newGroup);
 				that->connect(job, &KIO::SimpleJob::finished, [=] {
 					if(job->error())
-						sharedState->error = EIO;
+						sharedState->error = kioErrorToFuseError(job->error());
 					else
 					{
 						node->m_stat.st_uid = newUid;
@@ -432,7 +432,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			auto *job = KIO::chmod(that->remoteUrl(node), newMode);
 			that->connect(job, &KIO::SimpleJob::finished, [=] {
 				if(job->error())
-					sharedState->error = EIO;
+					sharedState->error = kioErrorToFuseError(job->error());
 				else
 					node->m_stat.st_mode = (node->m_stat.st_mode & S_IFMT) | newMode;
 
@@ -450,7 +450,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			auto *job = KIO::setModificationTime(that->remoteUrl(node), time);
 			that->connect(job, &KIO::SimpleJob::finished, [=] {
 				if(job->error())
-					sharedState->error = EIO;
+					sharedState->error = kioErrorToFuseError(job->error());
 				else // This is not quite correct, as KIO rounded the value down to a second
 					node->m_stat.st_mtim = sharedState->value.st_mtim;
 
@@ -513,7 +513,7 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
 		{
-			fuse_reply_err(req, EIO);
+			fuse_reply_err(req, kioErrorToFuseError(job->error()));
 			return;
 		}
 
@@ -549,7 +549,7 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
 		{
-			fuse_reply_err(req, EIO);
+			fuse_reply_err(req, kioErrorToFuseError(job->error()));
 			return;
 		}
 
@@ -610,7 +610,7 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
 		{
-			fuse_reply_err(req, EIO);
+			fuse_reply_err(req, kioErrorToFuseError(job->error()));
 			return;
 		}
 
@@ -652,7 +652,7 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
 		{
-			fuse_reply_err(req, EIO);
+			fuse_reply_err(req, kioErrorToFuseError(job->error()));
 			return;
 		}
 
@@ -743,7 +743,7 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 	auto *job = KIO::rename(url, newUrl, (flags & RENAME_NOREPLACE) ? KIO::DefaultFlags : KIO::Overwrite);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
-			fuse_reply_err(req, EIO);
+			fuse_reply_err(req, kioErrorToFuseError(job->error()));
 		else
 		{
 			if(replacedNode)
@@ -1398,7 +1398,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 				node->m_cacheSize = false;
 				node->m_cacheComplete = false;
 				node->m_localCache = nullptr;
-				emit node->localCacheChanged(EIO);
+				emit node->localCacheChanged(kioErrorToFuseError(job->error()));
 			}
 			else
 			{
@@ -1482,7 +1482,7 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 			remoteNode->m_childrenRequested = false;
 
 			if(job->error())
-				emit remoteNode->gotChildren(EIO);
+				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
 			else
 			{
 				remoteNode->m_childrenComplete = true;
@@ -1514,7 +1514,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 		if(statJob->error())
 		{
 			qDebug(KIOFUSE_LOG) << statJob->errorString();
-			callback(nullptr, EIO);
+			callback(nullptr, kioErrorToFuseError(statJob->error()));
 			return;
 		}
 
@@ -1723,7 +1723,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 			{
 				qWarning(KIOFUSE_LOG) << "Failed to send data:" << job->errorString();
 				markCacheDirty(node); // Try again
-				emit node->cacheFlushed(EIO);
+				emit node->cacheFlushed(kioErrorToFuseError(job->error()));
 				return;
 			}
 
@@ -1747,4 +1747,83 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 		node->disconnect(*connection);
 	}
 	);
+}
+
+int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
+	switch (kioError){
+		case 0                                     : return 0; // No error
+		case KIO::ERR_CANNOT_OPEN_FOR_READING      : return EIO;
+		case KIO::ERR_CANNOT_OPEN_FOR_WRITING      : return EIO;
+		case KIO::ERR_CANNOT_LAUNCH_PROCESS        : return EPERM;
+		case KIO::ERR_INTERNAL                     : return EPROTO;
+		case KIO::ERR_MALFORMED_URL                : return EBADF;
+		case KIO::ERR_UNSUPPORTED_PROTOCOL         : return ENOPROTOOPT;
+		case KIO::ERR_NO_SOURCE_PROTOCOL           : return ENOPROTOOPT;
+		case KIO::ERR_UNSUPPORTED_ACTION           : return ENOTTY;
+		case KIO::ERR_IS_DIRECTORY                 : return EISDIR;
+		case KIO::ERR_IS_FILE                      : return EEXIST;
+		case KIO::ERR_DOES_NOT_EXIST               : return ENOENT;
+		case KIO::ERR_FILE_ALREADY_EXIST           : return EEXIST;
+		case KIO::ERR_DIR_ALREADY_EXIST            : return EEXIST;
+		case KIO::ERR_UNKNOWN_HOST                 : return EHOSTUNREACH;
+		case KIO::ERR_ACCESS_DENIED                : return EPERM;
+		case KIO::ERR_WRITE_ACCESS_DENIED          : return EPERM;
+		case KIO::ERR_CANNOT_ENTER_DIRECTORY       : return ENOENT;
+		case KIO::ERR_PROTOCOL_IS_NOT_A_FILESYSTEM : return EPROTOTYPE;
+		case KIO::ERR_CYCLIC_LINK                  : return ELOOP;
+		case KIO::ERR_USER_CANCELED                : return ECANCELED;
+		case KIO::ERR_CYCLIC_COPY                  : return ELOOP;
+		case KIO::ERR_COULD_NOT_CREATE_SOCKET      : return ENOTCONN;
+		case KIO::ERR_CANNOT_CONNECT               : return ENOTCONN;
+		case KIO::ERR_CONNECTION_BROKEN            : return ENOTCONN;
+		case KIO::ERR_NOT_FILTER_PROTOCOL          : return EPROTOTYPE;
+		case KIO::ERR_CANNOT_MOUNT                 : return EIO;
+		case KIO::ERR_CANNOT_READ                  : return EIO;
+		case KIO::ERR_CANNOT_WRITE                 : return EIO;
+		case KIO::ERR_CANNOT_BIND                  : return EPERM;
+		case KIO::ERR_CANNOT_LISTEN                : return EPERM;
+		case KIO::ERR_CANNOT_ACCEPT                : return EPERM;
+		case KIO::ERR_CANNOT_LOGIN                 : return ECONNREFUSED;
+		case KIO::ERR_CANNOT_STAT                  : return EIO;
+		case KIO::ERR_CANNOT_CLOSEDIR              : return EIO;
+		case KIO::ERR_CANNOT_MKDIR                 : return EIO;
+		case KIO::ERR_CANNOT_RMDIR                 : return EIO;
+		case KIO::ERR_CANNOT_RESUME                : return ECONNABORTED;
+		case KIO::ERR_CANNOT_RENAME                : return EIO;
+		case KIO::ERR_CANNOT_CHMOD                 : return EIO;
+		case KIO::ERR_CANNOT_DELETE                : return EIO;
+		case KIO::ERR_SLAVE_DIED                   : return EIO;
+		case KIO::ERR_OUT_OF_MEMORY                : return ENOMEM;
+		case KIO::ERR_UNKNOWN_PROXY_HOST           : return EHOSTUNREACH;
+		case KIO::ERR_CANNOT_AUTHENTICATE          : return EACCES;
+		case KIO::ERR_ABORTED                      : return ECONNABORTED;
+		case KIO::ERR_INTERNAL_SERVER              : return EPROTO;
+		case KIO::ERR_SERVER_TIMEOUT               : return ETIMEDOUT;
+		case KIO::ERR_SERVICE_NOT_AVAILABLE        : return ENOPROTOOPT;
+		case KIO::ERR_UNKNOWN                      : return ENOENT;
+		case KIO::ERR_UNKNOWN_INTERRUPT            : return ENOENT;
+		case KIO::ERR_CANNOT_DELETE_ORIGINAL       : return EIO;
+		case KIO::ERR_CANNOT_DELETE_PARTIAL        : return EIO;
+		case KIO::ERR_CANNOT_RENAME_ORIGINAL       : return EIO;
+		case KIO::ERR_CANNOT_RENAME_PARTIAL        : return EIO;
+		case KIO::ERR_NEED_PASSWD                  : return EACCES;
+		case KIO::ERR_CANNOT_SYMLINK               : return EIO;
+		case KIO::ERR_NO_CONTENT                   : return ENODATA;
+		case KIO::ERR_DISK_FULL                    : return ENOMEM;
+		case KIO::ERR_IDENTICAL_FILES              : return EEXIST;
+		case KIO::ERR_SLAVE_DEFINED                : return EALREADY;
+		case KIO::ERR_UPGRADE_REQUIRED             : return EPROTOTYPE;
+		case KIO::ERR_POST_DENIED                  : return EACCES;
+		case KIO::ERR_COULD_NOT_SEEK               : return EIO;
+		case KIO::ERR_CANNOT_SETTIME               : return EIO;
+		case KIO::ERR_CANNOT_CHOWN                 : return EIO;
+		case KIO::ERR_POST_NO_SIZE                 : return EIO;
+		case KIO::ERR_DROP_ON_ITSELF               : return EINVAL;
+		case KIO::ERR_CANNOT_MOVE_INTO_ITSELF      : return EINVAL;
+		case KIO::ERR_PASSWD_SERVER                : return EIO;
+		case KIO::ERR_CANNOT_CREATE_SLAVE          : return EIO;
+		case KIO::ERR_FILE_TOO_LARGE_FOR_FAT32     : return EFBIG;
+		case KIO::ERR_OWNER_DIED                   : return EIO;
+		default                                    : return EIO;
+	}
 }

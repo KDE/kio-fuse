@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include <QProcess>
 #include <QStandardPaths>
@@ -43,6 +44,7 @@ private Q_SLOTS:
 	void testRenameOps();
 	void testDeletionOps();
 	void testArchiveOps();
+	void testKioErrorMapping();
 
 private:
 	QDateTime roundDownToSecond(QDateTime dt);
@@ -502,6 +504,24 @@ void FileOpsTest::testArchiveOps()
 	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path(), innerpath));
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
+}
+
+void FileOpsTest::testKioErrorMapping()
+{
+	QTemporaryFile localFile;
+	QVERIFY(localFile.open());
+	
+	// Mount the temporary file
+	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	
+	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
+	QVERIFY(mirroredFile.exists());
+	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
+	QCOMPARE(mirroredFile.size(), localFile.size());
+	// No permission to chown to root/root (unless running with CAP_CHOWN or being root)
+	QCOMPARE(chown(mirroredFile.fileName().toUtf8().data(), 0, 0), -1);
+	QCOMPARE(errno, EPERM);
 }
 
 QDateTime FileOpsTest::roundDownToSecond(QDateTime dt)

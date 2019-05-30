@@ -143,6 +143,9 @@ private:
 	void mountUrl(QUrl url, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
 	/** Handles the _control command in cmd asynchronously and call callback upon completion or failure. */
 	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
+    
+	/** Returns the corresponding FUSE error to the given KIO Job error */
+	static int kioErrorToFuseError(const int kioError);
 
 	/** Prevent the Application from quitting. */
 	std::unique_ptr<QEventLoopLocker> m_eventLoopLocker;
