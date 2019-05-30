@@ -26,7 +26,6 @@ Performance/usability improvements:
   This means that if a byte is touched every few seconds, the cache might never get flushed,
   that would need to be taken care of
 - Better error reporting:
-  * Currently any failure results in EIO. Map KIO Job errors to fuse_reply_err
   * Flushing happens on close(), which can't report errors, so it might be a good idea to show
     a notification to the user if it fails
 - Look into using KIO::read/KIO::write if possible:
