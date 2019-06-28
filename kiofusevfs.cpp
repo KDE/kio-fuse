@@ -1603,17 +1603,16 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 			attr.st_mode = S_IFDIR | 0755;
 
 			auto newOriginNode = std::make_shared<KIOFuseRemoteDirNode>(protocolNode->m_stat.st_ino, originNodeName, attr);
-			// Find out whether the base URL needs to start with a /
-			if(url.path().startsWith(QLatin1Char('/')))
-				(newOriginNode->m_overrideUrl = url).setPath(QStringLiteral("/"));
-			else
-				(newOriginNode->m_overrideUrl = url).setPath({});
+			newOriginNode->m_overrideUrl = makeOriginUrl(url);
 
 			originNode = newOriginNode;
 			insertNode(originNode);
 		}
 		else if(originNode->type() != KIOFuseNode::NodeType::RemoteDirNode)
 			    return callback(nullptr, EIO);
+		else // Allow the user to change the password
+			std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(originNode)->m_overrideUrl = makeOriginUrl(url);
+		
 
 		// Create all path components as directories
 		auto pathNode = originNode;
@@ -1690,6 +1689,17 @@ void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> cal
 		qWarning(KIOFUSE_LOG) << "Unknown control operation" << op;
 		return callback(EINVAL);
 	}
+}
+
+QUrl KIOFuseVFS::makeOriginUrl(QUrl url)
+{
+	// Find out whether the base URL needs to start with a /
+	if(url.path().startsWith(QLatin1Char('/')))
+		url.setPath(QStringLiteral("/"));
+	else
+		url.setPath({});
+
+	return url;
 }
 
 void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &node)

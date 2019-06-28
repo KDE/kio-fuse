@@ -153,6 +153,8 @@ private:
 	void mountUrl(QUrl url, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
 	/** Handles the _control command in cmd asynchronously and call callback upon completion or failure. */
 	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
+	/** Returns the override URL for an origin node */
+	QUrl makeOriginUrl(QUrl url);
     
 	/** Returns the corresponding FUSE error to the given KIO Job error */
 	static int kioErrorToFuseError(const int kioError);
