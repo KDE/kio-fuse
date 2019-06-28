@@ -65,6 +65,7 @@ public:
 
 private Q_SLOTS:
 	void fuseRequestPending();
+	void exitHandler();
 
 private:
 	// Functions used by fuse_lowlevel_ops
@@ -92,6 +93,13 @@ private:
 	static void flush(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void fsync(fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info *fi);
+	
+	/** Setups signal handlers. Returns true if successful, false otherwise **/
+	bool setupSignalHandlers();
+	/** Reverts to default signal handlers. Returns true if successful, false otherwise. **/
+	bool removeSignalHandlers();
+	/** Notifies m_signalNotifier of a signal **/
+	static void signalHandler(int signal);
 
 	/** Returns a pointer to a child node of parent with m_nodeName == name or nullptr. */
 	std::shared_ptr<KIOFuseNode> nodeByName(const std::shared_ptr<KIOFuseNode> &parent, const QString name) const;
@@ -159,6 +167,13 @@ private:
 	struct fuse_session *m_fuseSession = nullptr;
 	/** Fuse bookkeeping. */
 	std::unique_ptr<QSocketNotifier> m_fuseNotifier;
+
+	/** Fds of paired sockets. 
+	 * Used in conjunction with socket notifier to allow handling signals with the Qt event loop. **/
+	static int signalFd[2];
+	/** Activated if there is data to read from the fd.
+	 * This is the case when a signal handler is activated.**/
+	std::unique_ptr<QSocketNotifier> m_signalNotifier;
 
 	/** Used by insertNode for accelerating the search for the next free inode number. */
 	fuse_ino_t m_nextIno = KIOFuseIno::DynamicStart;
