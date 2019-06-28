@@ -14,7 +14,6 @@ Filesystem features:
   * Print a warning if a file with dirty cache got deleted? (renames can't be detected)
 - Umount support:
   Might not even be necessary - except for the nodes in RAM it does not use any resources
-- Support changing the password for an existing mount
 KIO Slave support:
 - Deal with invalid size reporting slaves (http/gdrive/...)?
 - Deal with slaves which don't support stat (fonts/...)?
