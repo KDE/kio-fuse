@@ -21,6 +21,7 @@
 #include <linux/fs.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include <QDateTime>
 #include <QDebug>
@@ -40,6 +41,7 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
 const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 	.init = &KIOFuseVFS::init,
 	.lookup = &KIOFuseVFS::lookup,
@@ -115,6 +117,8 @@ static bool sane_read(int fd, void *buf, size_t count)
 	return true;
 }
 
+int KIOFuseVFS::signalFd[2];
+
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
     : QObject(parent)
 {
@@ -148,7 +152,7 @@ bool KIOFuseVFS::start(struct fuse_args &args, const char *mountpoint)
 	if(!m_fuseSession)
 		return false;
 
-	if(fuse_set_signal_handlers(m_fuseSession) != 0
+	if(!setupSignalHandlers()
 	   || fuse_session_mount(m_fuseSession, mountpoint) != 0)
 	{
 		stop();
@@ -181,7 +185,7 @@ void KIOFuseVFS::stop()
 		// Disarm the QEventLoopLocker
 		m_eventLoopLocker.reset();
 
-		fuse_remove_signal_handlers(m_fuseSession);
+		removeSignalHandlers();
 		fuse_session_unmount(m_fuseSession);
 		fuse_session_destroy(m_fuseSession);
 		m_fuseSession = nullptr;
@@ -1785,8 +1789,68 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 	);
 }
 
+bool KIOFuseVFS::setupSignalHandlers() 
+{
+	// Create required socketpair for custom signal handling
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, signalFd)) {
+		return false;
+	}
+	m_signalNotifier = std::make_unique<QSocketNotifier>(signalFd[1], QSocketNotifier::Read, this);
+	m_signalNotifier->connect(m_signalNotifier.get(), &QSocketNotifier::activated, this, &KIOFuseVFS::exitHandler);
+	
+	struct sigaction sig;
+
+	sig.sa_handler = KIOFuseVFS::signalHandler;
+	sigemptyset(&sig.sa_mask);
+	sig.sa_flags = SA_RESTART;
+
+	if (sigaction(SIGHUP, &sig, 0))
+		return false;
+	if (sigaction(SIGTERM, &sig, 0))
+		return false;
+	if (sigaction(SIGINT, &sig, 0))
+		return false;
+
+	return true;
+}
+
+bool KIOFuseVFS::removeSignalHandlers() 
+{
+	m_signalNotifier.reset();
+	::close(signalFd[0]);
+	::close(signalFd[1]);
+
+	struct sigaction sig;
+
+	sig.sa_handler = SIG_DFL;
+	sigemptyset(&sig.sa_mask);
+	sig.sa_flags = SA_RESTART;
+
+	if (sigaction(SIGHUP, &sig, 0))
+		return false;
+	if (sigaction(SIGTERM, &sig, 0))
+		return false;
+	if (sigaction(SIGINT, &sig, 0))
+		return false;
+
+	return true;
+}
+
+void KIOFuseVFS::exitHandler() 
+{
+	m_signalNotifier->setEnabled(false);
+	int tmp;
+	::read(signalFd[1], &tmp, sizeof(tmp));
+	stop();
+}
+
+void KIOFuseVFS::signalHandler(int signal) 
+{
+	::write(signalFd[0], &signal, sizeof(signal));
+}
+
 int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
-	switch (kioError){
+	switch (kioError) {
 		case 0                                     : return 0; // No error
 		case KIO::ERR_CANNOT_OPEN_FOR_READING      : return EIO;
 		case KIO::ERR_CANNOT_OPEN_FOR_WRITING      : return EIO;
