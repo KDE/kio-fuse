@@ -38,6 +38,5 @@ Performance/usability improvements:
     fills /tmp (or wherever nodes created with tmpfile() reside in). Those files are impractical
 	to handle without KIO::read/KIO::write.
 Bugfixes:
-- Check what happens with files >= 4GiB on 32-bit systems
 - Check whether write access works before writing into the cache:
   Currently write access it not explicitly checked at all, possibly leading to data loss
