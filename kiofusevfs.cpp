@@ -63,35 +63,53 @@ const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
 };
 #pragma GCC diagnostic pop
 
-/* Handles partial writes.
+/* Handles partial writes and EINTR.
  * Returns true only if count bytes were written successfully. */
-static bool sane_fwrite(const char *buf, size_t count, FILE *fd)
+static bool sane_write(int fd, const void *buf, size_t count)
 {
-	while(count)
+	size_t bytes_left = count;
+	const char *buf_left = (const char*)buf;
+	while(bytes_left)
 	{
-		size_t step = fwrite(buf, 1, count, fd);
-		if(step == 0)
+		ssize_t step = write(fd, buf_left, bytes_left);
+		if(step == -1)
+		{
+			if(errno == EINTR)
+				continue;
+			else
+				return false;
+		}
+		else if(step == 0)
 			return false;
 
-		count -= step;
-		buf += step;
+		bytes_left -= step;
+		buf_left += step;
 	}
 
 	return true;
 }
 
-/* Handles partial reads.
+/* Handles partial reads and EINTR.
  * Returns true only if count bytes were read successfully. */
-static bool sane_fread(char *buf, size_t count, FILE *fd)
+static bool sane_read(int fd, void *buf, size_t count)
 {
-	while(count)
+	size_t bytes_left = count;
+	char *buf_left = (char*)buf;
+	while(bytes_left)
 	{
-		size_t step = fread(buf, 1, count, fd);
-		if(step == 0)
+		ssize_t step = read(fd, buf_left, bytes_left);
+		if(step == -1)
+		{
+			if(errno == EINTR)
+				continue;
+			else
+				return false;
+		}
+		else if(step == 0)
 			return false;
 
-		count -= step;
-		buf += step;
+		bytes_left -= step;
+		buf_left += step;
 	}
 
 	return true;
@@ -100,6 +118,7 @@ static bool sane_fread(char *buf, size_t count, FILE *fd)
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
     : QObject(parent)
 {
+	static_assert(sizeof(off_t) >= 8, "Please compile with -D_FILE_OFFSET_BITS=64 to allow working with large (>4GB) files");
 	struct stat attr = {};
 	fillStatForFile(attr);
 	attr.st_mode = S_IFDIR | 0755;
@@ -371,8 +390,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			// Have to wait until the cache is complete to truncate.
 			// Waiting until all bytes up to the truncation point are available won't work,
 			// as the fetch function would just overwrite the cache.
-			that->awaitBytesAvailable(remoteFileNode, SIZE_MAX, [=](int error) {
-				if(error && error != ESPIPE)
+			that->awaitCacheComplete(remoteFileNode, [=](int error) {
+				if(error)
 					sharedState->error = error;
 				else // Cache complete!
 				{
@@ -445,7 +464,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			if(to_set & FUSE_SET_ATTR_MTIME_NOW)
 				sharedState->value.st_mtim = tsNow;
 
-			auto time = QDateTime::fromMSecsSinceEpoch(sharedState->value.st_mtim.tv_sec * 1000
+			auto time = QDateTime::fromMSecsSinceEpoch(qint64(sharedState->value.st_mtim.tv_sec) * 1000
 			                                           + sharedState->value.st_mtim.tv_nsec / 1000000);
 			auto *job = KIO::setModificationTime(that->remoteUrl(node), time);
 			that->connect(job, &KIO::SimpleJob::finished, [=] {
@@ -812,7 +831,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		}
 
 		if(off < off_t(dirbuf.size()))
-			fuse_reply_buf(req, dirbuf.data() + off, std::min(size, dirbuf.size() - off));
+			fuse_reply_buf(req, dirbuf.data() + off, std::min(off_t(size), off_t(dirbuf.size()) - off));
 		else
 			fuse_reply_buf(req, nullptr, 0);
 	});
@@ -855,10 +874,10 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 			if(error == ESPIPE)
 			{
 				// Reading over the end
-				if(off >= off_t(remoteNode->m_cacheSize))
+				if(off >= remoteNode->m_cacheSize)
 					actualSize = 0;
 				else
-					actualSize = std::min(remoteNode->m_cacheSize - off, size);
+					actualSize = std::min(remoteNode->m_cacheSize - off, off_t(size));
 			}
 
 			// Make sure that the kernel has the data
@@ -926,14 +945,15 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 				return;
 			}
 
-			if(fseek(remoteNode->m_localCache, off, SEEK_SET) == -1
-			   || !sane_fwrite(data.data(), data.size(), remoteNode->m_localCache))
+			int cacheFd = fileno(remoteNode->m_localCache);
+			if(lseek(cacheFd, off, SEEK_SET) == -1
+			   || !sane_write(cacheFd, data.data(), data.size()))
 			{
 				fuse_reply_err(req, errno);
 				return;
 			}
 
-			remoteNode->m_cacheSize = std::max(remoteNode->m_cacheSize, off + size);
+			remoteNode->m_cacheSize = std::max(remoteNode->m_cacheSize, off_t(off + size));
 			remoteNode->m_stat.st_size = remoteNode->m_cacheSize;
 			that->markCacheDirty(remoteNode);
 
@@ -1357,8 +1377,14 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	}
 }
 
-void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, size_t bytes, std::function<void(int error)> callback)
+void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, off_t bytes, std::function<void(int error)> callback)
 {
+	if(bytes < 0)
+	{
+		qWarning(KIOFUSE_LOG) << "Negative size passed to awaitBytesAvailable";
+		return callback(EINVAL);
+	}
+
 	if(node->m_localCache && node->m_cacheSize >= bytes)
 		return callback(0); // Already available
 	else if(node->cacheIsComplete()) // Full cache is available...
@@ -1378,8 +1404,9 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 		connect(job, &KIO::TransferJob::data, [=](auto *job, const QByteArray &data) {
 			Q_UNUSED(job);
 
-			if(fseek(node->m_localCache, 0, SEEK_END) == -1
-			   || !sane_fwrite(data.data(), data.size(), node->m_localCache))
+			int cacheFd = fileno(node->m_localCache);
+			if(lseek(cacheFd, 0, SEEK_END) == -1
+			   || !sane_write(cacheFd, data.data(), data.size()))
 				emit node->localCacheChanged(errno);
 			else
 			{
@@ -1435,6 +1462,14 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 		// else continue waiting until the above happens
 	}
 	);
+}
+
+void KIOFuseVFS::awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void (int)> callback)
+{
+	return awaitBytesAvailable(node, std::numeric_limits<off_t>::max(), [callback](int error) {
+		// ESPIPE == cache complete, but less than the requested size, which is expected.
+		return callback(error == ESPIPE ? 0 : error);
+	});
 }
 
 void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void (int)> callback)
@@ -1675,7 +1710,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 	if(!node->cacheIsComplete())
 	{
 		qDebug(KIOFUSE_LOG) << "Deferring flushing of node" << node->m_nodeName << "until cache complete";
-		return awaitBytesAvailable(node, SIZE_MAX, [=](int error) {
+		return awaitCacheComplete(node, [=](int error) {
 			if(error)
 				callback(error);
 			else
@@ -1694,7 +1729,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 		auto *job = KIO::put(remoteUrl(node), node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
 		job->setTotalSize(node->m_cacheSize);
 
-		size_t bytesSent = 0; // Modified inside the lambda
+		off_t bytesSent = 0; // Modified inside the lambda
 		connect(job, &KIO::TransferJob::dataReq, [=](auto *job, QByteArray &data) mutable {
 			Q_UNUSED(job);
 
@@ -1702,12 +1737,13 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 			if(node->m_cacheSize <= bytesSent)
 				return;
 
-			size_t toSend = std::min(node->m_cacheSize - bytesSent, 1024*1024ul); // 1MiB max
+			off_t toSend = std::min(node->m_cacheSize - bytesSent, off_t(1024*1024ul)); // 1MiB max
 			data.resize(toSend);
 
 			// Read the cache file into the buffer
-			if(fseek(node->m_localCache, bytesSent, SEEK_SET) == -1
-			   || !sane_fread(data.data(), toSend, node->m_localCache))
+			int cacheFd = fileno(node->m_localCache);
+			if(lseek(cacheFd, bytesSent, SEEK_SET) == -1
+			   || !sane_read(cacheFd, data.data(), toSend))
 			{
 				qWarning(KIOFUSE_LOG) << "Failed to read cache:" << strerror(errno);
 				job->kill(KJob::EmitResult);

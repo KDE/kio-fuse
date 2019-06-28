@@ -1,7 +1,7 @@
 /*
  * Copyright 2019 Fabian Vogt <fabian@ritter-vogt.de>
  *
- * This program is free software; you can redistribute it and/or
+ * This program is free software; you can redistribute it and/or 
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 3 of
  * the License or any later version accepted by the membership of
@@ -45,6 +45,9 @@ private Q_SLOTS:
 	void testDeletionOps();
 	void testArchiveOps();
 	void testKioErrorMapping();
+#ifdef WASTE_DISK_SPACE
+	void testReadWrite4GBFile();
+#endif // WASTE_DISK_SPACE
 
 private:
 	QDateTime roundDownToSecond(QDateTime dt);
@@ -132,8 +135,8 @@ void FileOpsTest::testLocalFileOps()
 	QCOMPARE(mirroredFileInfo.lastRead(), roundDownToSecond(localFileInfo.lastRead()));
 
 	// Test touching the file
-	struct timespec times[2] = {{localFileInfo.lastModified().toSecsSinceEpoch() + 42, 0},
-	                            {localFileInfo.lastRead().toSecsSinceEpoch() + 1, 0}};
+	struct timespec times[2] = {{time_t(localFileInfo.lastModified().toSecsSinceEpoch()) + 42, 0},
+	                            {time_t(localFileInfo.lastRead().toSecsSinceEpoch()) + 1, 0}};
 	QCOMPARE(futimens(mirroredFile.handle(), times), 0);
 	localFileInfo.refresh();
 	mirroredFileInfo.refresh();
@@ -266,8 +269,8 @@ void FileOpsTest::testLocalDirOps()
 	QCOMPARE(mirrorDirInfo.lastRead(), roundDownToSecond(localDirInfo.lastRead()));
 
 	// Test touching the file
-	struct timespec times[2] = {{localDirInfo.lastModified().toSecsSinceEpoch() + 42, 0},
-	                            {localDirInfo.lastRead().toSecsSinceEpoch() + 1, 0}};
+	struct timespec times[2] = {{time_t(localDirInfo.lastModified().toSecsSinceEpoch()) + 42, 0},
+	                            {time_t(localDirInfo.lastRead().toSecsSinceEpoch()) + 1, 0}};
 	QCOMPARE(utimensat(AT_FDCWD, mirrorDir.path().toUtf8().data(), times, 0), 0);
 	localDirInfo.refresh();
 	mirrorDirInfo.refresh();
@@ -523,6 +526,45 @@ void FileOpsTest::testKioErrorMapping()
 	QCOMPARE(chown(mirroredFile.fileName().toUtf8().data(), 0, 0), -1);
 	QCOMPARE(errno, EPERM);
 }
+
+
+#ifdef WASTE_DISK_SPACE
+void FileOpsTest::testReadWrite4GBFile()
+{
+	QTemporaryFile localFile;
+	QVERIFY(localFile.open());
+
+	// Mount the temporary file
+	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
+	QVERIFY(mirroredFile.exists());
+	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
+
+	// Write new data at a 2^32 offset
+	QVERIFY(mirroredFile.seek(qint64(4096)*1024*1024));
+	QCOMPARE(mirroredFile.write(QStringLiteral("newteststring!").toUtf8()), 14);
+
+	QVERIFY(mirroredFile.flush());
+	// Flush the written contents into the backend
+	QCOMPARE(fsync(mirroredFile.handle()), 0);
+
+	// Currently, kio-fuse uses KIO::put and not KIO::write, so the file was replaced
+	// instead of changed. So reopen the file.
+	QFile localFile2(localFile.fileName());
+	QVERIFY(localFile2.open(QIODevice::ReadOnly));;
+
+	// Compare the content
+	QVERIFY(localFile2.seek(qint64(4096)*1024*1024-6));
+	QCOMPARE(localFile2.read(20), QByteArray("\x00\x00\x00\x00\x00\x00newteststring!", 20));
+	QVERIFY(localFile2.seek(qint64(4096)*4096*1024-6));
+	QCOMPARE(localFile2.read(20), QByteArray());
+	QVERIFY(localFile2.seek(qint64(4096)*1024*1024-6));
+	QVERIFY(mirroredFile.seek(qint64(4096)*1024*1024-6));
+	QCOMPARE(localFile2.read(20), mirroredFile.read(20));
+}
+#endif // WASTE_DISK_SPACE
 
 QDateTime FileOpsTest::roundDownToSecond(QDateTime dt)
 {

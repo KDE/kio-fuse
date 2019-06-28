@@ -127,7 +127,7 @@ public:
 	// Cache information
 	bool cacheIsComplete() { return m_cacheComplete; }
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
-	size_t m_cacheSize = 0; // Size of the local cache - might be less than m_stat.st_size.
+	off_t m_cacheSize = 0; // Size of the local cache - might be less than m_stat.st_size.
 	int m_cacheComplete = false,
 	    m_cacheDirty = false, // Set on every write to m_localCache, cleared when a flush starts
 	    m_flushRunning = false; // If a flush is currently running

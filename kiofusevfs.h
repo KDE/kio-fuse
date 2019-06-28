@@ -130,7 +130,9 @@ private:
 
 	/** Invokes callback on error or when the bytes are available for reading/writing.
 	  * If the file is smaller than bytes, it sets error = ESPIPE. */
-	void awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, size_t bytes, std::function<void(int error)> callback);
+	void awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, off_t bytes, std::function<void(int error)> callback);
+	/** Invokes callback on error or when the cache is marked as complete. */
+	void awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void(int error)> callback);
 	/** Invokes callback on error or when all children nodes are available */
 	void awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void(int error)> callback);
 	/** Marks a node's cache as dirty and add it to m_dirtyNodes. */
