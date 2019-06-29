@@ -1081,11 +1081,11 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		return that->replyEntry(req, child);
 
 	// Not found - try again
-	that->awaitChildrenComplete(std::dynamic_pointer_cast<KIOFuseDirNode>(parentNode), [=](int error) {
-		if(error)
+	that->mountUrl(QUrl(that->remoteUrl(parentNode).toString() + QLatin1Char('/') + nodeName), [=](auto node, int error) {
+		if(error && error != ENOENT)
 			fuse_reply_err(req, error);
 		else
-			that->replyEntry(req, that->nodeByName(parentNode, nodeName));
+			that->replyEntry(req, node);
 	});
 }
 
@@ -1751,7 +1751,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 			if(node->m_cacheSize <= bytesSent)
 				return;
 
-			off_t toSend = std::min(node->m_cacheSize - bytesSent, off_t(1024*1024ul)); // 1MiB max
+			off_t toSend = std::min(node->m_cacheSize - bytesSent, off_t(14*1024*1024ul)); // 14MiB max
 			data.resize(toSend);
 
 			// Read the cache file into the buffer
