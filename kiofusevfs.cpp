@@ -1244,7 +1244,7 @@ void KIOFuseVFS::decrementLookupCount(const std::shared_ptr<KIOFuseNode> node, u
 	{
 		// Delete the node
 		m_dirtyNodes.extract(node->m_stat.st_ino);
-		reparentNode(node, KIOFuseIno::DeletedRoot);
+		reparentNode(node, KIOFuseIno::Invalid);
 		m_nodes.erase(m_nodes.find(node->m_stat.st_ino));
 	}
 }
