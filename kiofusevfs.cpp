@@ -1197,15 +1197,6 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 	return {};
 }
 
-QString KIOFuseVFS::virtualPath(const std::shared_ptr<KIOFuseNode> &node) const
-{
-	QStringList path;
-	for(const KIOFuseNode *currentNode = node.get(); currentNode != nullptr; currentNode = nodeForIno(currentNode->m_parentIno).get())
-		path.prepend(currentNode->m_nodeName);
-
-	return path.join(QLatin1Char('/'));
-}
-
 void KIOFuseVFS::fillStatForFile(struct stat &attr)
 {
 	static uid_t uid = getuid();
