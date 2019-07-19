@@ -114,8 +114,6 @@ private:
 	/** Returns the full url upwards until a OriginNode is hit.
 	  * If no OriginNode is found, an empty QUrl is returned. */
 	QUrl remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const;
-	/** Returns the path upwards until a root node. */
-	QString virtualPath(const std::shared_ptr<KIOFuseNode> &node) const;
 
 	/** Fills a (previously zeroed out) struct stat with minimal information about a fake file. */
 	void fillStatForFile(struct stat &attr);
