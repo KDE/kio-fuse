@@ -1184,7 +1184,6 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 		if(remoteDirNode && !remoteDirNode->m_overrideUrl.isEmpty())
 		{
 			// Origin found - add path and return
-			path.prepend({}); // Add a leading slash if necessary
 			QUrl url = remoteDirNode->m_overrideUrl;
 			url.setPath(url.path() + path.join(QLatin1Char('/')), QUrl::DecodedMode);
 			return url;
