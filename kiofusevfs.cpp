@@ -1740,6 +1740,18 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 			// Someone truncated the file?
 			if(node->m_cacheSize <= bytesSent)
 				return;
+			
+			// Somebody wrote to the cache whilst sending data.
+			// Kill the job to save time and try again.
+			// However, set a limit to how many times we do this consecutively.
+			if(node->m_cacheDirty && node->m_numKilledJobs < 2 && job->percent() < 85)
+			{
+				job->kill(KJob::Quietly);
+				node->m_numKilledJobs++;
+				node->m_flushRunning = false;
+				awaitNodeFlushed(node, [](int){});
+				return;
+			}
 
 			off_t toSend = std::min(node->m_cacheSize - bytesSent, off_t(14*1024*1024ul)); // 14MiB max
 			data.resize(toSend);
@@ -1771,6 +1783,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 			{
 				// Nobody wrote to the cache while sending data
 				m_dirtyNodes.extract(node->m_stat.st_ino);
+				node->m_numKilledJobs = 0;
 				emit node->cacheFlushed(0);
 			}
 			else
