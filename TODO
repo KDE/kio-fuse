@@ -16,13 +16,7 @@ Filesystem features:
   Might not even be necessary - except for the nodes in RAM it does not use any resources
 KIO Slave support:
 - Deal with invalid size reporting slaves (http/gdrive/...)?
-- Deal with slaves which don't support stat (fonts/...)?
-- Fix kdeconnect:// to return all children in readdir and not just an incomplete list of broken
-  links (or add a workaround?)
 Performance/usability improvements:
-- In awaitNodeFlushed kill KIO::put job if the cache got written to (?):
-  This means that if a byte is touched every few seconds, the cache might never get flushed,
-  that would need to be taken care of
 - Better error reporting:
   * Flushing happens on close(), which can't report errors, so it might be a good idea to show
     a notification to the user if it fails
