@@ -199,7 +199,7 @@ void KIOFuseVFS::stop()
 	{
 		auto node = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(nodeForIno(*it));
 
-		++it; // Increment now as flushRemoteNode invalidates the iterator
+		++it; // Increment now as awaitNodeFlushed invalidates the iterator
 
 		if(!node || (!node->m_cacheDirty && !node->m_flushRunning))
 		{
@@ -251,7 +251,8 @@ void KIOFuseVFS::init(void *userdata, fuse_conn_info *conn)
 
 	conn->want &= ~FUSE_CAP_HANDLE_KILLPRIV; // Don't care about resetting setuid/setgid flags
 	conn->want &= ~FUSE_CAP_ATOMIC_O_TRUNC; // Use setattr with st_size = 0 instead of open with O_TRUNC
-	conn->want |= FUSE_CAP_WRITEBACK_CACHE; // Kernel caches reads/writes, handles O_APPEND and st_[acm]tim
+	// Writeback caching needs fuse_notify calls for shared filesystems, but those are broken by design
+	conn->want &= ~FUSE_CAP_WRITEBACK_CACHE;
 	conn->time_gran = 1000000000; // Only second resolution for mtime
 }
 
@@ -343,13 +344,12 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				if(remoteFileNode->m_localCache == nullptr)
 				{
 					fuse_reply_err(req, EIO);
-					// Some part of the operation might've succeeded though, inform the kernel about that
-					that->sendNotifyInvalEntry(remoteFileNode);
 					return;
 				}
 
 				remoteFileNode->m_cacheComplete = true;
 				remoteFileNode->m_cacheSize = remoteFileNode->m_stat.st_size = 0;
+				remoteFileNode->m_stat.st_mtim = remoteFileNode->m_stat.st_ctim = tsNow;
 				that->markCacheDirty(remoteFileNode);
 
 				to_set &= ~FUSE_SET_ATTR_SIZE; // Done already!
@@ -381,8 +381,6 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				if(sharedState->error)
 				{
 					fuse_reply_err(req, sharedState->error);
-					// Some part of the operation might've succeeded though, inform the kernel about that
-					that->sendNotifyInvalEntry(node);
 				}
 				else
 					replyAttr(req, node);
@@ -406,6 +404,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 					else
 					{
 						remoteFileNode->m_cacheSize = remoteFileNode->m_stat.st_size = sharedState->value.st_size;
+						remoteFileNode->m_stat.st_mtim = remoteFileNode->m_stat.st_ctim = tsNow;
 						that->markCacheDirty(remoteFileNode);
 					}
 				}
@@ -442,6 +441,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 					{
 						node->m_stat.st_uid = newUid;
 						node->m_stat.st_gid = newGid;
+						node->m_stat.st_ctim = tsNow;
 					}
 
 					markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
@@ -457,8 +457,11 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 				if(job->error())
 					sharedState->error = kioErrorToFuseError(job->error());
 				else
+				{
 					node->m_stat.st_mode = (node->m_stat.st_mode & S_IFMT) | newMode;
-
+					node->m_stat.st_ctim = tsNow;
+				}
+				
 				markOperationCompleted(FUSE_SET_ATTR_MODE);
 			});
 		}
@@ -703,6 +706,9 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 
 	node->m_openCount += 1;
 
+	if (!(fi->flags & O_NOATIME))
+		clock_gettime(CLOCK_REALTIME, &node->m_stat.st_atim);
+
 	fuse_reply_open(req, fi);
 }
 
@@ -775,6 +781,7 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 			that->reparentNode(node, newParentNode->m_stat.st_ino);
 			node->m_nodeName = newNameStr;
 
+			clock_gettime(CLOCK_REALTIME, &node->m_stat.st_ctim);
 			fuse_reply_err(req, 0);
 		}
 	});
@@ -942,27 +949,40 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 	{
 		QByteArray data(buf, size); // Copy data
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-		that->awaitBytesAvailable(remoteNode, off + size, [=](int error) {
+
+		auto fuseReplyCallback = [=] (int error) {
 			if(error && error != ESPIPE)
 			{
 				fuse_reply_err(req, error);
 				return;
 			}
 
+			off_t offset = (fi->flags & O_APPEND) ? remoteNode->m_cacheSize : off;
+
 			int cacheFd = fileno(remoteNode->m_localCache);
-			if(lseek(cacheFd, off, SEEK_SET) == -1
+			if(lseek(cacheFd, offset, SEEK_SET) == -1
 			   || !sane_write(cacheFd, data.data(), data.size()))
 			{
 				fuse_reply_err(req, errno);
 				return;
 			}
 
-			remoteNode->m_cacheSize = std::max(remoteNode->m_cacheSize, off_t(off + size));
+			remoteNode->m_cacheSize = std::max(remoteNode->m_cacheSize, off_t(offset + size));
 			remoteNode->m_stat.st_size = remoteNode->m_cacheSize;
+			// Update [cm] time as without writeback caching,
+			// the kernel doesn't do this for us.
+			clock_gettime(CLOCK_REALTIME, &remoteNode->m_stat.st_mtim);
+			remoteNode->m_stat.st_ctim = remoteNode->m_stat.st_mtim;
 			that->markCacheDirty(remoteNode);
 
 			fuse_reply_write(req, data.size());
-		});
+		};
+
+		if(fi->flags & O_APPEND)
+			// Wait for cache to be complete to ensure valid m_cacheSize
+			that->awaitCacheComplete(remoteNode, fuseReplyCallback);
+		else
+			that->awaitBytesAvailable(remoteNode, off + size, fuseReplyCallback);
 	}
 	}
 }
@@ -1270,12 +1290,6 @@ void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 	}
 
 	fuse_reply_entry(req, &entry);
-}
-
-void KIOFuseVFS::sendNotifyInvalEntry(std::shared_ptr<KIOFuseNode> node)
-{
-	auto name = node->m_nodeName.toUtf8();
-	fuse_lowlevel_notify_inval_entry(m_fuseSession, node->m_parentIno, name.data(), name.size());
 }
 
 std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride)

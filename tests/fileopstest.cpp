@@ -238,6 +238,38 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(symlink.open(QIODevice::ReadOnly));
 	QCOMPARE(symlink.readAll(), QStringLiteral("symlinktargetcontent").toUtf8());
 	QCOMPARE(symlink.symLinkTarget(), QDir(mirrordataPath).filePath(QStringLiteral("symlinktarget")));
+	
+	// Verify that we adhere to O_APPEND flag as kernel doesn't handle this for us.
+	QTemporaryFile appendFile;
+	QVERIFY(appendFile.open());
+	QCOMPARE(appendFile.write("teststring"), 10);
+	QVERIFY(appendFile.flush());
+	appendFile.close();
+	// Mount the temp file
+	cmd = QStringLiteral("MOUNT file://%1").arg(appendFile.fileName()).toUtf8();
+	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+
+	QFile appendMirror(QStringLiteral("%1/file%2").arg(m_mountDir.path(), appendFile.fileName()));
+	QVERIFY(appendMirror.exists());
+	QVERIFY(appendMirror.open(QIODevice::Append | QIODevice::ReadWrite));
+	// even if we set seek to 0 kio-fuse should change it back to the end of the file.
+	QVERIFY(appendMirror.seek(0));
+	QCOMPARE(appendMirror.write("APPENDME"), 8);
+	// Pass changes from mirror to local.
+	QVERIFY(appendMirror.flush());
+	QCOMPARE(fsync(appendMirror.handle()), 0);
+	
+	// Currently, kio-fuse uses KIO::put and not KIO::write, so the file was replaced
+	// instead of changed. So reopen the file.
+	QFile appendFile2(appendFile.fileName());
+	QVERIFY(appendFile2.open(QIODevice::ReadOnly));
+	QVERIFY(appendMirror.seek(0));
+	QVERIFY(appendFile2.seek(0));
+	// If we don't adhere to O_APPEND flag we'd get "APPENDMEng" instead...
+	QCOMPARE(appendMirror.readAll(), QStringLiteral("teststringAPPENDME").toUtf8());
+	QVERIFY(appendMirror.seek(0));
+	QVERIFY(appendFile2.seek(0));
+	QCOMPARE(appendMirror.readAll(), appendFile2.readAll());
 }
 
 void FileOpsTest::testLocalDirOps()
