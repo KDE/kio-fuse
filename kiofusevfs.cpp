@@ -1754,7 +1754,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 			// Someone truncated the file?
 			if(node->m_cacheSize <= bytesSent)
 				return;
-			
+
 			// Somebody wrote to the cache whilst sending data.
 			// Kill the job to save time and try again.
 			// However, set a limit to how many times we do this consecutively.
