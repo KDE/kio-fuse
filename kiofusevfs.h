@@ -131,8 +131,6 @@ private:
 	/** Sends the node entry with fuse_reply_entry and increments the lookup count.
 	  * Sends an empty entry if node is null.*/
 	void replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node);
-	/** Sends a notification with fuse_lowlevel_notify_inval_entry. */
-	void sendNotifyInvalEntry(std::shared_ptr<KIOFuseNode> node);
 
 	/** Invokes callback on error or when the bytes are available for reading/writing.
 	  * If the file is smaller than bytes, it sets error = ESPIPE. */
