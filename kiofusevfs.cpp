@@ -1744,7 +1744,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 		node->m_cacheDirty = false;
 		node->m_flushRunning = true;
 
-		auto *job = KIO::put(remoteUrl(node), node->m_stat.st_mode & ~S_IFMT, KIO::Overwrite);
+		auto *job = KIO::put(remoteUrl(node), -1, KIO::Overwrite);
 		job->setTotalSize(node->m_cacheSize);
 
 		off_t bytesSent = 0; // Modified inside the lambda
