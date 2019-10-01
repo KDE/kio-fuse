@@ -39,31 +39,33 @@
 #pragma GCC diagnostic ignored "-Wpedantic"
 #pragma GCC diagnostic ignored "-Wzero-as-null-pointer-constant"
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-
-const struct fuse_lowlevel_ops KIOFuseVFS::fuse_ll_ops = {
-	.init = &KIOFuseVFS::init,
-	.lookup = &KIOFuseVFS::lookup,
-	.forget = &KIOFuseVFS::forget,
-	.getattr = &KIOFuseVFS::getattr,
-	.setattr = &KIOFuseVFS::setattr,
-	.readlink = &KIOFuseVFS::readlink,
-	.mknod = &KIOFuseVFS::mknod,
-	.mkdir = &KIOFuseVFS::mkdir,
-	.unlink = &KIOFuseVFS::unlink,
-	.rmdir = &KIOFuseVFS::rmdir,
-	.symlink = &KIOFuseVFS::symlink,
-	.rename = &KIOFuseVFS::rename,
-	.open = &KIOFuseVFS::open,
-	.read = &KIOFuseVFS::read,
-	.write = &KIOFuseVFS::write,
-	.flush = &KIOFuseVFS::flush,
-	.release = &KIOFuseVFS::release,
-	.fsync = &KIOFuseVFS::fsync,
-	.readdir = &KIOFuseVFS::readdir,
+struct KIOFuseVFS::FuseLLOps : public fuse_lowlevel_ops
+{
+	FuseLLOps()
+	{
+		init = &KIOFuseVFS::init;
+		lookup = &KIOFuseVFS::lookup;
+		forget = &KIOFuseVFS::forget;
+		getattr = &KIOFuseVFS::getattr;
+		setattr = &KIOFuseVFS::setattr;
+		readlink = &KIOFuseVFS::readlink;
+		mknod = &KIOFuseVFS::mknod;
+		mkdir = &KIOFuseVFS::mkdir;
+		unlink = &KIOFuseVFS::unlink;
+		rmdir = &KIOFuseVFS::rmdir;
+		symlink = &KIOFuseVFS::symlink;
+		rename = &KIOFuseVFS::rename;
+		open = &KIOFuseVFS::open;
+		read = &KIOFuseVFS::read;
+		write = &KIOFuseVFS::write;
+		flush = &KIOFuseVFS::flush;
+		release = &KIOFuseVFS::release;
+		fsync = &KIOFuseVFS::fsync;
+		readdir = &KIOFuseVFS::readdir;
+	}
 };
-#pragma GCC diagnostic pop
+
+const struct KIOFuseVFS::FuseLLOps KIOFuseVFS::fuse_ll_ops;
 
 /* Handles partial writes and EINTR.
  * Returns true only if count bytes were written successfully. */

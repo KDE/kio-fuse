@@ -159,7 +159,8 @@ private:
 	std::unique_ptr<QEventLoopLocker> m_eventLoopLocker;
 
 	/** Struct of implemented fuse operations. */
-	static const struct fuse_lowlevel_ops fuse_ll_ops;
+	struct FuseLLOps;
+	static const FuseLLOps fuse_ll_ops;
 
 	/** Fuse bookkeeping. */
 	struct fuse_session *m_fuseSession = nullptr;
