@@ -24,8 +24,6 @@ Performance/usability improvements:
   * Needs ::open to succeed, has state per slave (?)
   * Does not support truncation, so either a fallback to ::put or support in KIO is necessary
 - Improve usability with large files over a slow connection (e.g. VM disk images):
-  * Abort fetching files into the cache in release: If the file is closed, the cache can be thrown
-    away.
   * Don't cache too large files - might DoS the system. Determining the mime type of a single VM disk
     fills /tmp (or wherever nodes created with tmpfile() reside in). Those files are impractical
 	to handle without KIO::read/KIO::write.
