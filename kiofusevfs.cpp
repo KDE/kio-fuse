@@ -1412,7 +1412,15 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 		qDebug(KIOFUSE_LOG) << "Fetching cache for" << node->m_nodeName;
 		auto *job = KIO::get(remoteUrl(node));
 		connect(job, &KIO::TransferJob::data, [=](auto *job, const QByteArray &data) {
-			Q_UNUSED(job);
+			// Nobody needs the data anymore? Drop the cache.
+			if(node->m_openCount == 0 && !node->m_cacheDirty && !node->m_flushRunning)
+			{
+				// KJob::Quietly would break the cache in the result handler while
+				// the error handler sets up the node state just right.
+				job->kill(KJob::EmitResult);
+				qDebug(KIOFUSE_LOG) << "Stopped filling the cache of" << node->m_nodeName;
+				return;
+			}
 
 			int cacheFd = fileno(node->m_localCache);
 			if(lseek(cacheFd, 0, SEEK_END) == -1
@@ -1432,7 +1440,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 				node->m_cacheDirty = false;
 
 				fclose(node->m_localCache);
-				node->m_cacheSize = false;
+				node->m_cacheSize = 0;
 				node->m_cacheComplete = false;
 				node->m_localCache = nullptr;
 				emit node->localCacheChanged(kioErrorToFuseError(job->error()));
