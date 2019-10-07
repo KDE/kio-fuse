@@ -1723,6 +1723,9 @@ QUrl KIOFuseVFS::makeOriginUrl(QUrl url)
 
 void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &node)
 {
+	if(node->m_cacheDirty)
+		return; // Already dirty, nothing to do
+
 	node->m_cacheDirty = true;
 	m_dirtyNodes.insert(node->m_stat.st_ino);
 }
