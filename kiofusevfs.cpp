@@ -1028,7 +1028,12 @@ void KIOFuseVFS::release(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 
 		if(remoteFileNode->m_cacheDirty || remoteFileNode->m_flushRunning)
 		{
-			qWarning(KIOFUSE_LOG) << "Node turned dirty in flush callback";
+			if(remoteFileNode->m_parentIno == KIOFuseIno::DeletedRoot)
+				return; // Closed a deleted dirty file, keep the cache as it could be reopened
+
+			// Can't happen, but if it does, avoid data loss and potential crashing later by keeping
+			// the cache.
+			qWarning(KIOFUSE_LOG) << "Node" << remoteFileNode->m_nodeName << "turned dirty in flush callback";
 			return;
 		}
 
