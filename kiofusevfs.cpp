@@ -18,8 +18,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <qglobal.h>
+
+#ifdef Q_OS_LINUX
 #include <linux/fs.h>
+#endif
 #include <sys/types.h>
+#include <errno.h>
 #include <unistd.h>
 #include <signal.h>
 
@@ -34,6 +39,19 @@
 
 #include "debug.h"
 #include "kiofusevfs.h"
+
+
+// Flags that don't exist on FreeBSD; since these are used as
+// bit(masks), setting them to 0 effectively means they're always unset.
+#ifndef O_NOATIME
+#define O_NOATIME 0
+#endif
+
+// Flags that are extensions for renameat2, cribbed from GNU stdio.h
+// and <linux/fs.h>
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
 
 // The libfuse macros make this necessary
 #pragma GCC diagnostic ignored "-Wpedantic"
