@@ -53,6 +53,7 @@ private Q_SLOTS:
 	void testDeletionOps();
 	void testArchiveOps();
 	void testKioErrorMapping();
+	void testRootLookup();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -576,6 +577,14 @@ void FileOpsTest::testKioErrorMapping()
 	QCOMPARE(errno, EPERM);
 }
 
+void FileOpsTest::testRootLookup()
+{
+	struct stat st;
+	// Verify that it does not exist...
+	QCOMPARE(stat(qPrintable(QStringLiteral("%1/invalid").arg(m_mountDir.path())), &st), -1);
+	// ... and set errno correctly
+	QCOMPARE(errno, ENOENT);
+}
 
 #ifdef WASTE_DISK_SPACE
 void FileOpsTest::testReadWrite4GBFile()
