@@ -119,7 +119,6 @@ void FileOpsTest::testLocalFileOps()
 
 	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
 	QVERIFY(mirroredFile.exists());
-	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 	QCOMPARE(mirroredFile.size(), localFile.size());
 
 	// Compare file metadata
@@ -134,6 +133,8 @@ void FileOpsTest::testLocalFileOps()
 	// KIO does not expose times with sub-second precision
 	QCOMPARE(mirroredFileInfo.lastModified(), roundDownToSecond(localFileInfo.lastModified()));
 	QCOMPARE(mirroredFileInfo.lastRead(), roundDownToSecond(localFileInfo.lastRead()));
+
+	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 
 	// Test touching the file
 	struct timespec times[2] = {{time_t(localFileInfo.lastModified().toSecsSinceEpoch()) + 42, 0},
