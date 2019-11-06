@@ -131,6 +131,7 @@ KIOFuseVFS::KIOFuseVFS(QObject *parent)
 
 	auto root = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
 	insertNode(root, KIOFuseIno::Root);
+	incrementLookupCount(root, 1); // Implicitly referenced by mounting
 
 	auto deletedRoot = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
 	insertNode(deletedRoot, KIOFuseIno::DeletedRoot);
