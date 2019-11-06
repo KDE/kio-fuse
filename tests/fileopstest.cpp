@@ -68,8 +68,8 @@ void FileOpsTest::initTestCase()
 
 	// kio-fuse without "-f" daemonizes only after mounting succeeded
 	QVERIFY(kiofuseProcess.waitForFinished());
-	QVERIFY(kiofuseProcess.exitStatus() == QProcess::NormalExit);
-	QVERIFY(kiofuseProcess.exitCode() == 0);
+	QCOMPARE(kiofuseProcess.exitStatus(), QProcess::NormalExit);
+	QCOMPARE(kiofuseProcess.exitCode(), 0);
 
 	m_controlFile.setFileName(m_mountDir.filePath(QStringLiteral("_control")));
 
@@ -221,10 +221,10 @@ void FileOpsTest::testLocalFileOps()
 	// Test chmod
 	QCOMPARE(chmod(mirroredFile.fileName().toUtf8().data(), 0054), 0);
 	struct stat attr;
-	QVERIFY(stat(localFile.fileName().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localFile.fileName().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFREG | 0054);
 	QCOMPARE(chmod(mirroredFile.fileName().toUtf8().data(), 0600), 0);
-	QVERIFY(stat(localFile.fileName().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localFile.fileName().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFREG | 0600);
 
 	// Mount the data path
@@ -326,10 +326,10 @@ void FileOpsTest::testLocalDirOps()
 	// Test chmod
 	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0054), 0);
 	struct stat attr;
-	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localDir.path().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFDIR | 0054);
 	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0700), 0);
-	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localDir.path().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFDIR | 0700);
 
 	// Mount the data path and compare the directory content
