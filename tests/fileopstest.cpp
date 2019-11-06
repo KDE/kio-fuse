@@ -84,11 +84,12 @@ void FileOpsTest::cleanupTestCase()
 	// Make sure that the mountpoint is not busy
 	m_controlFile.close();
 
-	QProcess fusermountProcess;
-	fusermountProcess.start(QStringLiteral("fusermount3"), {QStringLiteral("-u"), m_mountDir.path()});
+	QProcess umountProcess;
+	// umount has to be setuid root (Linux) or vfs.usermount=1 (FreeBSD)
+	umountProcess.start(QStringLiteral("umount"), {m_mountDir.path()});
 
 	// If any of this fails, we can't do anything anyway
-	fusermountProcess.waitForFinished();
+	umountProcess.waitForFinished();
 	m_mountDir.remove();
 }
 
