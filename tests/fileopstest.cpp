@@ -481,7 +481,11 @@ void FileOpsTest::testDeletionOps()
 
 	// Try to delete the directory
 	QCOMPARE(unlink(dir.path().toUtf8().data()), -1);
-	QCOMPARE(errno, EISDIR);
+	#ifdef Q_OS_LINUX
+		QCOMPARE(errno, EISDIR);
+	#else
+		QCOMPARE(errno, EPERM);
+	#endif
 	QCOMPARE(rmdir(dir.path().toUtf8().data()), -1);
 	QCOMPARE(errno, ENOTEMPTY);
 
