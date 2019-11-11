@@ -131,6 +131,7 @@ KIOFuseVFS::KIOFuseVFS(QObject *parent)
 
 	auto root = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
 	insertNode(root, KIOFuseIno::Root);
+	incrementLookupCount(root, 1); // Implicitly referenced by mounting
 
 	auto deletedRoot = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
 	insertNode(deletedRoot, KIOFuseIno::DeletedRoot);
@@ -952,14 +953,15 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 		QByteArray data(buf, size); // Copy data
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
 
-		auto fuseReplyCallback = [=] (int error) {
+		// fi lives on the caller's stack, make a copy
+		auto fuseReplyCallback = [=, fi_flags=fi->flags] (int error) {
 			if(error && error != ESPIPE)
 			{
 				fuse_reply_err(req, error);
 				return;
 			}
 
-			off_t offset = (fi->flags & O_APPEND) ? remoteNode->m_cacheSize : off;
+			off_t offset = (fi_flags & O_APPEND) ? remoteNode->m_cacheSize : off;
 
 			int cacheFd = fileno(remoteNode->m_localCache);
 			if(lseek(cacheFd, offset, SEEK_SET) == -1

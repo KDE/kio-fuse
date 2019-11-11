@@ -68,8 +68,8 @@ void FileOpsTest::initTestCase()
 
 	// kio-fuse without "-f" daemonizes only after mounting succeeded
 	QVERIFY(kiofuseProcess.waitForFinished());
-	QVERIFY(kiofuseProcess.exitStatus() == QProcess::NormalExit);
-	QVERIFY(kiofuseProcess.exitCode() == 0);
+	QCOMPARE(kiofuseProcess.exitStatus(), QProcess::NormalExit);
+	QCOMPARE(kiofuseProcess.exitCode(), 0);
 
 	m_controlFile.setFileName(m_mountDir.filePath(QStringLiteral("_control")));
 
@@ -84,11 +84,12 @@ void FileOpsTest::cleanupTestCase()
 	// Make sure that the mountpoint is not busy
 	m_controlFile.close();
 
-	QProcess fusermountProcess;
-	fusermountProcess.start(QStringLiteral("fusermount3"), {QStringLiteral("-u"), m_mountDir.path()});
+	QProcess umountProcess;
+	// umount has to be setuid root (Linux) or vfs.usermount=1 (FreeBSD)
+	umountProcess.start(QStringLiteral("umount"), {m_mountDir.path()});
 
 	// If any of this fails, we can't do anything anyway
-	fusermountProcess.waitForFinished();
+	umountProcess.waitForFinished();
 	m_mountDir.remove();
 }
 
@@ -118,7 +119,6 @@ void FileOpsTest::testLocalFileOps()
 
 	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
 	QVERIFY(mirroredFile.exists());
-	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 	QCOMPARE(mirroredFile.size(), localFile.size());
 
 	// Compare file metadata
@@ -133,6 +133,8 @@ void FileOpsTest::testLocalFileOps()
 	// KIO does not expose times with sub-second precision
 	QCOMPARE(mirroredFileInfo.lastModified(), roundDownToSecond(localFileInfo.lastModified()));
 	QCOMPARE(mirroredFileInfo.lastRead(), roundDownToSecond(localFileInfo.lastRead()));
+
+	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 
 	// Test touching the file
 	struct timespec times[2] = {{time_t(localFileInfo.lastModified().toSecsSinceEpoch()) + 42, 0},
@@ -219,10 +221,10 @@ void FileOpsTest::testLocalFileOps()
 	// Test chmod
 	QCOMPARE(chmod(mirroredFile.fileName().toUtf8().data(), 0054), 0);
 	struct stat attr;
-	QVERIFY(stat(localFile.fileName().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localFile.fileName().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFREG | 0054);
 	QCOMPARE(chmod(mirroredFile.fileName().toUtf8().data(), 0600), 0);
-	QVERIFY(stat(localFile.fileName().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localFile.fileName().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFREG | 0600);
 
 	// Mount the data path
@@ -324,10 +326,10 @@ void FileOpsTest::testLocalDirOps()
 	// Test chmod
 	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0054), 0);
 	struct stat attr;
-	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localDir.path().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFDIR | 0054);
 	QCOMPARE(chmod(mirrorDir.path().toUtf8().data(), 0700), 0);
-	QVERIFY(stat(localDir.path().toUtf8().data(), &attr) == 0);
+	QCOMPARE(stat(localDir.path().toUtf8().data(), &attr), 0);
 	QCOMPARE(attr.st_mode, S_IFDIR | 0700);
 
 	// Mount the data path and compare the directory content
@@ -480,7 +482,11 @@ void FileOpsTest::testDeletionOps()
 
 	// Try to delete the directory
 	QCOMPARE(unlink(dir.path().toUtf8().data()), -1);
-	QCOMPARE(errno, EISDIR);
+	#ifdef Q_OS_LINUX
+		QCOMPARE(errno, EISDIR);
+	#else
+		QCOMPARE(errno, EPERM);
+	#endif
 	QCOMPARE(rmdir(dir.path().toUtf8().data()), -1);
 	QCOMPARE(errno, ENOTEMPTY);
 
