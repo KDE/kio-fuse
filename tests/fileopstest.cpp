@@ -77,6 +77,10 @@ void FileOpsTest::initTestCase()
 	QVERIFY(m_controlFile.open(QIODevice::WriteOnly | QIODevice::Unbuffered));
 	m_controlFile.close();
 	QVERIFY(m_controlFile.open(QIODevice::WriteOnly | QIODevice::Unbuffered | QIODevice::Truncate));
+
+	// QTemporaryDir would otherwise rm -rf on destruction,
+	// which is fatal if umount fails while something is mounted inside
+	m_mountDir.setAutoRemove(false);
 }
 
 void FileOpsTest::cleanupTestCase()
@@ -88,8 +92,11 @@ void FileOpsTest::cleanupTestCase()
 	// umount has to be setuid root (Linux) or vfs.usermount=1 (FreeBSD)
 	umountProcess.start(QStringLiteral("umount"), {m_mountDir.path()});
 
-	// If any of this fails, we can't do anything anyway
-	umountProcess.waitForFinished();
+	QVERIFY(umountProcess.waitForFinished());
+	QCOMPARE(umountProcess.exitStatus(), QProcess::NormalExit);
+	QCOMPARE(umountProcess.exitCode(), 0);
+
+	// Remove only after umounting suceeded
 	m_mountDir.remove();
 }
 
