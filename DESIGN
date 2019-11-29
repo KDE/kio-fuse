@@ -72,8 +72,8 @@ node's virtual type method is called or RTTI is queried using dynamic_cast.
 
 During runtime, the tree can look like this:
 
-"" (ino: 1)             "_control" (ino: 3)
-KIOFuseRootNode ----->  KIOFuseControlNode
+"" (ino: 1)
+KIOFuseRootNode
     |
     |        "smb"
     |------> KIOFuseProtocolNode

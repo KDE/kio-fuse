@@ -20,10 +20,9 @@
 
 #include <fuse_lowlevel.h>
 
-#include <QSocketNotifier>
 #include <QCoreApplication>
 
-#include "kiofusevfs.h"
+#include "kiofuseservice.h"
 
 int main(int argc, char *argv[])
 {
@@ -32,12 +31,6 @@ int main(int argc, char *argv[])
 
 	if (fuse_parse_cmdline(&args, &opts) != 0)
 		return 1;
-
-	if(opts.mountpoint == nullptr)
-	{
-		puts("No mountpoint given.");
-		opts.show_help = 1;
-	}
 
 	if (opts.show_help)
 	{
@@ -54,11 +47,10 @@ int main(int argc, char *argv[])
 	}
 
 	QCoreApplication a(argc, argv);
-	KIOFuseVFS kiofusevfs;
-	if(!kiofusevfs.start(args, opts.mountpoint))
-		return 1;
+	KIOFuseService kiofuseservice;
 
-	fuse_daemonize(opts.foreground);
+	if(!kiofuseservice.start(args, QString::fromUtf8(opts.mountpoint), opts.foreground))
+		return 1;
 
 	fuse_opt_free_args(&args);
 
