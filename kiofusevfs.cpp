@@ -135,10 +135,6 @@ KIOFuseVFS::KIOFuseVFS(QObject *parent)
 
 	auto deletedRoot = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
 	insertNode(deletedRoot, KIOFuseIno::DeletedRoot);
-
-	auto control = std::make_shared<KIOFuseControlNode>(KIOFuseIno::Root, QStringLiteral("_control"), attr);
-	insertNode(control, KIOFuseIno::Control);
-	control->m_stat.st_mode = S_IFREG | 0400;
 }
 
 KIOFuseVFS::~KIOFuseVFS()
@@ -146,17 +142,16 @@ KIOFuseVFS::~KIOFuseVFS()
 	stop();
 }
 
-bool KIOFuseVFS::start(struct fuse_args &args, const char *mountpoint)
+bool KIOFuseVFS::start(struct fuse_args &args, const QString& mountpoint)
 {
 	stop();
-
 	m_fuseSession = fuse_session_new(&args, &fuse_ll_ops, sizeof(fuse_ll_ops), this);
 
 	if(!m_fuseSession)
 		return false;
 
 	if(!setupSignalHandlers()
-	   || fuse_session_mount(m_fuseSession, mountpoint) != 0)
+	   || fuse_session_mount(m_fuseSession, mountpoint.toUtf8().data()) != 0)
 	{
 		stop();
 		return false;
@@ -288,14 +283,6 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 	{
 	default:
 		fuse_reply_err(req, EOPNOTSUPP);
-		return;
-	case KIOFuseNode::NodeType::ControlNode:
-		// Only truncation to 0 supported
-		if((to_set & FUSE_SET_ATTR_SIZE) == FUSE_SET_ATTR_SIZE && attr->st_size == 0)
-			replyAttr(req, node);
-		else
-			fuse_reply_err(req, EOPNOTSUPP);
-
 		return;
 	case KIOFuseNode::NodeType::RemoteDirNode:
 	case KIOFuseNode::NodeType::RemoteFileNode:
@@ -704,9 +691,6 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		return;
 	}
 
-	if(ino == KIOFuseIno::Control)
-		fi->direct_io = true; // Necessary to get each command directly
-
 	node->m_openCount += 1;
 
 	if (!(fi->flags & O_NOATIME))
@@ -907,9 +891,6 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 		});
 		break;
 	}
-	case KIOFuseNode::NodeType::ControlNode:
-		fuse_reply_err(req, EPERM);
-		break;
 	}
 }
 
@@ -936,18 +917,6 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 		fuse_reply_err(req, EIO);
 		return;
 
-	case KIOFuseNode::NodeType::ControlNode:
-	{
-		// Intentionally ignoring the offset here
-		QString command = QString::fromUtf8(buf, size);
-		that->handleControlCommand(command, [=] (int ret) {
-			if(ret)
-				fuse_reply_err(req, ret);
-			else
-				fuse_reply_write(req, size);
-		});
-		return;
-	}
 	case KIOFuseNode::NodeType::RemoteFileNode:
 	{
 		QByteArray data(buf, size); // Copy data
@@ -1223,6 +1192,15 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 
 	// No origin found until the root - return an invalid URL
 	return {};
+}
+
+QString KIOFuseVFS::virtualPath(const std::shared_ptr<KIOFuseNode> &node) const
+{
+	QStringList path;
+	for(const KIOFuseNode *currentNode = node.get(); currentNode != nullptr; currentNode = nodeForIno(currentNode->m_parentIno).get())
+		path.prepend(currentNode->m_nodeName);
+
+	return path.join(QLatin1Char('/'));
 }
 
 void KIOFuseVFS::fillStatForFile(struct stat &attr)
@@ -1684,32 +1662,6 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 
 		callback(finalNode, 0);
 	});
-}
-
-void KIOFuseVFS::handleControlCommand(QString cmd, std::function<void (int)> callback)
-{
-	int opEnd = cmd.indexOf(QLatin1Char(' '));
-	if(opEnd < 0)
-		return callback(EINVAL);
-
-	QStringRef op = cmd.midRef(0, opEnd);
-	// Command "MOUNT <url>"
-	if(op == QStringLiteral("MOUNT"))
-	{
-		QUrl url = QUrl{cmd.midRef(opEnd + 1).trimmed().toString()};
-		if(url.isValid())
-			return mountUrl(url, [=](auto node, int error) {
-				Q_UNUSED(node);
-				callback(error ? EINVAL : 0);
-			});
-		else
-			return callback(EINVAL);
-	}
-	else
-	{
-		qWarning(KIOFUSE_LOG) << "Unknown control operation" << op;
-		return callback(EINVAL);
-	}
 }
 
 QUrl KIOFuseVFS::makeOriginUrl(QUrl url)

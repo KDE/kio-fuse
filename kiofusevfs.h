@@ -44,8 +44,6 @@ enum KIOFuseIno : fuse_ino_t {
 
 	/** The inode number of the parent of deleted nodes. */
 	DeletedRoot,
-	/** The inode number of the _control file. */
-	Control,
 
 	/** Dynamic allocation by insertNode starts here. */
 	DynamicStart,
@@ -54,14 +52,19 @@ enum KIOFuseIno : fuse_ino_t {
 class KIOFuseVFS : public QObject
 {
 	Q_OBJECT
+
 public:
 	explicit KIOFuseVFS(QObject *parent = nullptr);
 	~KIOFuseVFS();
 
 	/** Mounts the filesystem at mountpoint. Returns true on success. */
-	bool start(fuse_args &args, const char *mountpoint);
+	bool start(fuse_args &args, const QString& mountpoint);
 	/** Umounts the filesystem (if necessary) and flushes dirty nodes. */
 	void stop();
+	/** Runs KIO::stat on url and adds a node to the tree if successful. Calls the callback at the end. */
+	void mountUrl(QUrl url, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
+	/** Returns the path upwards until a root node. */
+	QString virtualPath(const std::shared_ptr<KIOFuseNode> &node) const;
 
 private Q_SLOTS:
 	void fuseRequestPending();
@@ -145,10 +148,6 @@ private:
 	  * If writes happen while a flush is sending data, a flush will be retriggered. */
 	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void(int error)> callback);
 
-	/** Runs KIO::stat on url and adds a node to the tree if successful. Calls the callback at the end. */
-	void mountUrl(QUrl url, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
-	/** Handles the _control command in cmd asynchronously and call callback upon completion or failure. */
-	void handleControlCommand(QString cmd, std::function<void(int error)> callback);
 	/** Returns the override URL for an origin node */
 	QUrl makeOriginUrl(QUrl url);
     

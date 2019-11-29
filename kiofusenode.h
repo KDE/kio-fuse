@@ -48,7 +48,6 @@ public:
 		LastDirType = RemoteDirNode,
 
 		// File types
-		ControlNode,
 		RemoteFileNode,
 		RemoteSymlinkNode,
 	};
@@ -105,13 +104,6 @@ public:
 Q_SIGNALS:
 	// Emitted after finishing (successful or not) a distlist on this node
 	void gotChildren(int error);
-};
-
-class KIOFuseControlNode : public KIOFuseNode {
-public:
-	using KIOFuseNode::KIOFuseNode;
-	static const NodeType Type = NodeType::ControlNode;
-	NodeType type() const override { return Type; }
 };
 
 class KIOFuseRemoteFileNode : public QObject, public KIOFuseNode {

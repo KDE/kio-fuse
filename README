@@ -9,36 +9,43 @@ To run the tests, run "make test". There is nothing to install (yet).
 
 To install build dependencies on Arch Linux:
 
-    pacman -S base-devel fuse3 cmake extra-cmake-modules qt5base kio
+    pacman -S base-devel fuse3 cmake extra-cmake-modules qt5base kio kdbusaddons
 
 To install build dependencies on openSUSE Tumbleweed:
 
-    zypper install extra-cmake-modules 'cmake(KF5KIO)' 'pkgconfig(fuse3)' kio-devel 'cmake(Qt5Test)'
+    zypper install extra-cmake-modules 'cmake(KF5KIO)' 'pkgconfig(fuse3)' 
+    kio-devel kdbusaddons-devel 'cmake(Qt5Test)' 'cmake(Qt5Dbus)'
 
 To install build dependencies on Ubuntu 19.04:
 
-    apt install fuse3 libfuse3-dev build-essential cmake extra-cmake-modules pkg-config libkf5kio-dev
+    apt install fuse3 libfuse3-dev build-essential cmake extra-cmake-modules
+    pkg-config libkf5kio-dev libkf5dbusaddons-dev
 
 Running
 -------
 
 Create a new directory somewhere, make sure that no daemon is going to clean
 up after it (like systemd-tmpfiles in /run/user/...) and run kio-fuse -d $dir.
-The "-d" means that it shows debug output and does not daemonize - that makes
-it easier to use it at first.
+The "-d" means that it shows debug output and does not daemonize - that makes it
+easier to use it at first.
 
-In the directory you'll find a new empty file _control which is used to send
-commands to kio-fuse. Let's assume you want to make the files at
+In your session bus you'll find a org.kde.KIOFuse service with an interface that
+allows one to communicate with the kio-fuse process.
+
+Let's assume you want to make the files at
 ftp://user:password@server/directory accessible in your local file system.
-To send the corresponding mount command, run
+To send the corresponding mount command, type the following in the command line:
+dbus-send --session --print-reply --type=method_call \
+          --dest=org.kde.KIOFuse \
+                 /org/kde/KIOFuse \
+                 org.kde.KIOFuse.VFS.mountUrl string:ftp://user:password@server/directory
 
-echo "MOUNT ftp://user:password@server/directory" >> $dir/_control
+If it failed, kio-fuse will reply with an appropriate error message. If it
+succeeded, you will get the location that the URL is mounted on as a reply. In
+this case it would be $dir/ftp/user@server/directory and the directory will be
+accessibly at that URL.
 
-If it failed, kio-fuse wrote the error message returned by kio into your
-terminal. If it succeeded, you won't see any output and the hierarchy is
-accessible at $dir/ftp/user@server/directory.
-
-After your work is done, simply run "fusermount -u $dir" to unmount the URL and
+After your work is done, simply run "fusermount3 -u $dir" to unmount the URL and
 exit kio-fuse.
 
 Have a lot of fun!

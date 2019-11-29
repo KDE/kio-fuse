@@ -28,16 +28,24 @@
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTest>
+#include <QtDBus/QDBusConnection>
+#include <QtDBus/QDBusReply>
+#include <QDebug>
+#include "kiofuse_interface.h"
 
 class FileOpsTest : public QObject
 {
 	Q_OBJECT
+public:
+	FileOpsTest() : m_kiofuse_iface(QStringLiteral("org.kde.KIOFuse"),
+	                 QStringLiteral("/org/kde/KIOFuse"),
+	                 QDBusConnection::sessionBus()) {}
 
 private Q_SLOTS:
 	void initTestCase();
 	void cleanupTestCase();
 
-	void testControlFile();
+	void testDBusErrorReply();
 	void testLocalFileOps();
 	void testLocalDirOps();
 	void testCreationOps();
@@ -52,42 +60,31 @@ private Q_SLOTS:
 private:
 	QDateTime roundDownToSecond(QDateTime dt);
 
-	QFile m_controlFile;
+	org::kde::KIOFuse::VFS m_kiofuse_iface;
 	QTemporaryDir m_mountDir;
 };
 
+
 void FileOpsTest::initTestCase()
 {
+	// QTemporaryDir would otherwise rm -rf on destruction,
+	// which is fatal if umount fails while something is mounted inside
+	m_mountDir.setAutoRemove(false);
 	QString programpath = QFINDTESTDATA("kio-fuse");
 
 	QProcess kiofuseProcess;
 	kiofuseProcess.setProgram(programpath);
 	kiofuseProcess.setArguments({m_mountDir.path()});
+	kiofuseProcess.setProcessChannelMode(QProcess::ForwardedChannels);
 
 	kiofuseProcess.start();
-
-	// kio-fuse without "-f" daemonizes only after mounting succeeded
 	QVERIFY(kiofuseProcess.waitForFinished());
-	QCOMPARE(kiofuseProcess.exitStatus(), QProcess::NormalExit);
+	QCOMPARE(kiofuseProcess.exitStatus(),  QProcess::NormalExit);
 	QCOMPARE(kiofuseProcess.exitCode(), 0);
-
-	m_controlFile.setFileName(m_mountDir.filePath(QStringLiteral("_control")));
-
-	// Make sure that it works with both truncation and without
-	QVERIFY(m_controlFile.open(QIODevice::WriteOnly | QIODevice::Unbuffered));
-	m_controlFile.close();
-	QVERIFY(m_controlFile.open(QIODevice::WriteOnly | QIODevice::Unbuffered | QIODevice::Truncate));
-
-	// QTemporaryDir would otherwise rm -rf on destruction,
-	// which is fatal if umount fails while something is mounted inside
-	m_mountDir.setAutoRemove(false);
 }
 
 void FileOpsTest::cleanupTestCase()
 {
-	// Make sure that the mountpoint is not busy
-	m_controlFile.close();
-
 	QProcess unmountProcess;
 	#ifdef Q_OS_FREEBSD
 		// No fusermount on FreeBSD, use umount directly instead
@@ -104,13 +101,11 @@ void FileOpsTest::cleanupTestCase()
 	m_mountDir.remove();
 }
 
-void FileOpsTest::testControlFile()
+void FileOpsTest::testDBusErrorReply()
 {
-	QVERIFY(m_controlFile.exists());
-	QVERIFY(m_controlFile.isWritable());
-
-	QByteArray cmd = QStringLiteral("MOUNT invalid URL").toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), -1);
+	QDBusPendingReply<QString> reply = m_kiofuse_iface.mountUrl(QStringLiteral("invalid URL"));
+	reply.waitForFinished();
+	QVERIFY(reply.isError());
 }
 
 void FileOpsTest::testLocalFileOps()
@@ -122,13 +117,14 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(localFile.flush());
 
 	// Mount the temporary file
-	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localFile.fileName())).value();
+	QVERIFY(!reply.isEmpty());
 
 	// Doing the same again should work just fine
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	reply = m_kiofuse_iface.mountUrl(localFile.fileName()).value();
+	QVERIFY(!reply.isEmpty());
 
-	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
+	QFile mirroredFile(reply);
 	QVERIFY(mirroredFile.exists());
 	QCOMPARE(mirroredFile.size(), localFile.size());
 
@@ -241,9 +237,9 @@ void FileOpsTest::testLocalFileOps()
 	// Mount the data path
 	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));
 	QVERIFY(!dataPath.isEmpty());
-	cmd = QStringLiteral("MOUNT file://%1").arg(dataPath).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
-	QString mirrordataPath = QStringLiteral("%1/file%2").arg(m_mountDir.path(), dataPath);
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(dataPath)).value();
+	QVERIFY(!reply.isEmpty());
+	QString mirrordataPath = reply;
 
 	// Verify the symlink inside is correct
 	QFile symlink(QDir(mirrordataPath).filePath(QStringLiteral("symlink")));
@@ -259,10 +255,10 @@ void FileOpsTest::testLocalFileOps()
 	QVERIFY(appendFile.flush());
 	appendFile.close();
 	// Mount the temp file
-	cmd = QStringLiteral("MOUNT file://%1").arg(appendFile.fileName()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(appendFile.fileName())).value();
+	QVERIFY(!reply.isEmpty());
 
-	QFile appendMirror(QStringLiteral("%1/file%2").arg(m_mountDir.path(), appendFile.fileName()));
+	QFile appendMirror(reply);
 	QVERIFY(appendMirror.exists());
 	QVERIFY(appendMirror.open(QIODevice::Append | QIODevice::ReadWrite));
 	// even if we set seek to 0 kio-fuse should change it back to the end of the file.
@@ -291,10 +287,10 @@ void FileOpsTest::testLocalDirOps()
 	QVERIFY(localDir.isValid());
 
 	// Mount the temporary dir
-	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
 
-	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QDir mirrorDir(reply);
 	QVERIFY(mirrorDir.exists());
 
 	// Create a folder inside
@@ -346,9 +342,9 @@ void FileOpsTest::testLocalDirOps()
 	// Mount the data path and compare the directory content
 	QString dataPath = QFINDTESTDATA(QStringLiteral("data"));
 	QVERIFY(!dataPath.isEmpty());
-	cmd = QStringLiteral("MOUNT file://%1").arg(dataPath).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
-	QString mirrordataPath = QStringLiteral("%1/file%2").arg(m_mountDir.path(), dataPath);
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(dataPath)).value();
+	QVERIFY(!reply.isEmpty());
+	QString mirrordataPath = reply;
 
 	auto sourceEntryList = QDir(dataPath).entryList(QDir::NoFilter, QDir::Name);
 	auto mirrorEntryList = QDir(mirrordataPath).entryList(QDir::NoFilter, QDir::Name);
@@ -357,7 +353,9 @@ void FileOpsTest::testLocalDirOps()
 
 	// Make sure dirlisting file:/// works
 	sourceEntryList = QDir(QStringLiteral("/")).entryList(QDir::NoFilter, QDir::Name);
-	mirrorEntryList = QDir(QStringLiteral("%1/file").arg(m_mountDir.path())).entryList(QDir::NoFilter, QDir::Name);
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("file:///")).value();
+	QVERIFY(!reply.isEmpty());
+	mirrorEntryList = QDir(reply).entryList(QDir::NoFilter, QDir::Name);
 
 	QCOMPARE(mirrorEntryList, sourceEntryList);
 }
@@ -368,10 +366,10 @@ void FileOpsTest::testCreationOps()
 	QVERIFY(localDir.isValid());
 
 	// Mount the temporary dir
-	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
 
-	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QDir mirrorDir(reply);
 	QVERIFY(mirrorDir.exists());
 
 	// Create a symlink
@@ -402,10 +400,10 @@ void FileOpsTest::testRenameOps()
 	QVERIFY(localDir.isValid());
 
 	// Mount the temporary dir
-	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
 
-	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QDir mirrorDir(reply);
 	QVERIFY(mirrorDir.exists());
 
 	// Create a directory
@@ -475,10 +473,10 @@ void FileOpsTest::testDeletionOps()
 	QVERIFY(localDir.isValid());
 
 	// Mount the temporary dir
-	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localDir.path()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
 
-	QDir mirrorDir(QStringLiteral("%1/file/%2").arg(m_mountDir.path(), localDir.path()));
+	QDir mirrorDir(reply);
 	QVERIFY(mirrorDir.exists());
 
 	// Create a directory
@@ -532,16 +530,18 @@ void FileOpsTest::testArchiveOps()
 	QString outerpath = QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz"));
 
 	// Mount a file inside the archive
-	QByteArray cmd = QStringLiteral("MOUNT tar://%1/outerarchive/outerfile").arg(outerpath).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("tar://%1/outerarchive/outerfile").arg(outerpath)).value();
+	QVERIFY(!reply.isEmpty());
 
 	// And verify its content
-	QString outerfilepath = QStringLiteral("%1/tar%2/outerarchive/outerfile").arg(m_mountDir.path(), outerpath);
+	QString outerfilepath = reply;
 	QFile outerfile(outerfilepath);
 	QVERIFY(outerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
 
-	QString innerpath = QStringLiteral("%1/tar%2/outerarchive/innerarchive.tar.gz").arg(m_mountDir.path(), outerpath);
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("tar://%1/outerarchive/innerarchive.tar.gz").arg(outerpath)).value();
+	QVERIFY(!reply.isEmpty());
+	QString innerpath = reply;
 
 	// Unfortunately kio_archive is not reentrant, so a direct access would deadlock.
 	// As a workaround, cache the file to avoid a 2nd call into kio_archive.
@@ -550,10 +550,10 @@ void FileOpsTest::testArchiveOps()
 	QVERIFY(!innerarchiveFile.readAll().isEmpty());
 
 	// Next, mount an archive inside - this uses kio-fuse recursively
-	cmd = QStringLiteral("MOUNT tar://%1").arg(innerpath).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("tar://%1").arg(innerpath)).value();
+	QVERIFY(!reply.isEmpty());
 
-	QFile innerfile(QStringLiteral("%1/tar%2/innerarchive/innerfile").arg(m_mountDir.path(), innerpath));
+	QFile innerfile(QStringLiteral("%1/innerarchive/innerfile").arg(reply));
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
 }
@@ -564,10 +564,10 @@ void FileOpsTest::testKioErrorMapping()
 	QVERIFY(localFile.open());
 	
 	// Mount the temporary file
-	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localFile.fileName())).value();
+	QVERIFY(!reply.isEmpty());
 	
-	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
+	QFile mirroredFile(reply);
 	QVERIFY(mirroredFile.exists());
 	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 	QCOMPARE(mirroredFile.size(), localFile.size());
@@ -584,10 +584,10 @@ void FileOpsTest::testReadWrite4GBFile()
 	QVERIFY(localFile.open());
 
 	// Mount the temporary file
-	QByteArray cmd = QStringLiteral("MOUNT file://%1").arg(localFile.fileName()).toUtf8();
-	QCOMPARE(m_controlFile.write(cmd), cmd.length());
+	QDBusPendingReply reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localFile.fileName())).value();
+	QVERIFY(!reply.isEmpty());
 
-	QFile mirroredFile(QStringLiteral("%1/file%2").arg(m_mountDir.path(), localFile.fileName()));
+	QFile mirroredFile(reply);
 	QVERIFY(mirroredFile.exists());
 	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
 
