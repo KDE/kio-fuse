@@ -1078,8 +1078,17 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	if(auto child = that->nodeByName(parentNode, nodeName))
 		return that->replyEntry(req, child);
 
-	// Not found - try again
-	that->mountUrl(QUrl(that->remoteUrl(parentNode).toString() + QLatin1Char('/') + nodeName), [=](auto node, int error) {
+	QUrl url = that->remoteUrl(parentNode);
+	if(url.isEmpty())
+	{
+		// Directory not remote, so definitely does not exist
+		fuse_reply_err(req, ENOENT);
+		return;
+	}
+
+	// Not in the local tree, but remote - try again
+	url.setPath(url.path() + QLatin1Char('/') + nodeName);
+	that->mountUrl(url, [=](auto node, int error) {
 		if(error && error != ENOENT)
 			fuse_reply_err(req, error);
 		else

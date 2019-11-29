@@ -53,6 +53,8 @@ private Q_SLOTS:
 	void testDeletionOps();
 	void testArchiveOps();
 	void testKioErrorMapping();
+	void testRootLookup();
+	void testFilenameEscaping();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -576,6 +578,42 @@ void FileOpsTest::testKioErrorMapping()
 	QCOMPARE(errno, EPERM);
 }
 
+void FileOpsTest::testRootLookup()
+{
+	struct stat st;
+	// Verify that it does not exist...
+	QCOMPARE(stat(qPrintable(QStringLiteral("%1/invalid").arg(m_mountDir.path())), &st), -1);
+	// ... and set errno correctly
+	QCOMPARE(errno, ENOENT);
+}
+
+void FileOpsTest::testFilenameEscaping()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// Create a file in localDir with an "unusual" filename
+	for(const QString &name : {QStringLiteral("file0?name"),
+	    QStringLiteral("file1#name"), QStringLiteral("file2%20name"),
+	    QStringLiteral("file2 \nname?asdf&foo#bar")})
+	{
+		QFile localFile(localDir.filePath(name));
+		QVERIFY(localFile.open(QFile::WriteOnly));
+		QCOMPARE(localFile.write("teststring", 10), 10);
+		localFile.close();
+
+		QFile mirrorFile(mirrorDir.filePath(name));
+		QVERIFY2(mirrorFile.open(QFile::ReadOnly), name.toUtf8().data());
+		QCOMPARE(mirrorFile.readAll(), QStringLiteral("teststring").toUtf8());
+	}
+}
 
 #ifdef WASTE_DISK_SPACE
 void FileOpsTest::testReadWrite4GBFile()
