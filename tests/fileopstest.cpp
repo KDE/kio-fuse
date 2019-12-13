@@ -108,6 +108,12 @@ void FileOpsTest::testDBusErrorReply()
 	QDBusPendingReply<QString> reply = m_kiofuse_iface.mountUrl(QStringLiteral("invalid URL"));
 	reply.waitForFinished();
 	QVERIFY(reply.isError());
+	QCOMPARE(reply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.CannotMount"));
+
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("http://www.kde.org"));
+	reply.waitForFinished();
+	QVERIFY(reply.isError());
+	QCOMPARE(reply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.SchemeNotSupported"));
 }
 
 void FileOpsTest::testLocalFileOps()
