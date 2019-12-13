@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.1)
 
-project(kio-fuse VERSION 0.1)
+project(kio-fuse VERSION 4.90.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,7 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDEFrameworkCompilerSettings NO_POLICY_SCOPE)
 include(ECMQtDeclareLoggingCategory)
+include(ECMSetupVersion)
 
 find_package(PkgConfig REQUIRED)
 find_package(Qt5 ${Qt5_MIN_VERSION} COMPONENTS Core REQUIRED)
@@ -39,6 +40,10 @@ set(KIOFUSE_SOURCES
 	kiofuseservice.cpp
 	kiofuseservice.h
 	kiofusenode.h)
+
+ecm_setup_version(PROJECT
+	VARIABLE_PREFIX KIOFUSE
+	VERSION_HEADER kiofuseversion.h)
 
 ecm_qt_declare_logging_category(KIOFUSE_SOURCES
 	HEADER debug.h
