@@ -30,6 +30,14 @@
 #include "kiofuseservice.h"
 #include "kiofusevfs.h"
 
+const QStringList KIOFuseService::m_blacklist {
+    QStringLiteral("gdrive"), // @see #1
+    QStringLiteral("mtp"), // @see #2
+    // http(s) is buggy and gives back invalid sizes (similar to gdrive).
+    QStringLiteral("https"),
+    QStringLiteral("http")
+};
+
 KIOFuseService::~KIOFuseService()
 {
 	// Make sure the VFS is unmounted before the member destructors run.
@@ -74,6 +82,16 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 {
 	message.setDelayedReply(true);
 	QUrl url = QUrl::fromUserInput(remoteUrl);
+	if(m_blacklist.contains(url.scheme()))
+	{
+		url.setPassword({}); // Lets not give back passwords in plaintext...
+		auto errorReply = message.createErrorReply(
+			QStringLiteral("org.kde.KIOFuse.VFS.Error.SchemeNotSupported"),
+			QStringLiteral("KIOFuse does not suport mounting of URLs with a scheme of %1").arg(url.scheme())
+		);
+		QDBusConnection::sessionBus().send(errorReply);
+		return QString();
+	}
 	kiofusevfs.mountUrl(url, [=] (auto node, int error) {
 		if(error)
 		{

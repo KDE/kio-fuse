@@ -56,5 +56,6 @@ private:
 	QString m_mountpoint;
 	/** tempdir created if user does not specify mountpoint */
 	std::optional<QTemporaryDir> m_tempDir;
-
+	/** A list of protocols that are blacklisted (for various reasons). */
+	static const QStringList m_blacklist;
 };
