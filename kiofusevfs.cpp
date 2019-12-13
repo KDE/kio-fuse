@@ -25,6 +25,11 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QVersionNumber>
+
+#ifdef Q_OS_LINUX
+#include <sys/utsname.h>
+#endif
 
 #include <KIO/ListJob>
 #include <KIO/MkdirJob>
@@ -124,7 +129,6 @@ int KIOFuseVFS::signalFd[2];
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
     : QObject(parent)
 {
-	static_assert(sizeof(off_t) >= 8, "Please compile with -D_FILE_OFFSET_BITS=64 to allow working with large (>4GB) files");
 	struct stat attr = {};
 	fillStatForFile(attr);
 	attr.st_mode = S_IFDIR | 0755;
@@ -144,6 +148,9 @@ KIOFuseVFS::~KIOFuseVFS()
 
 bool KIOFuseVFS::start(struct fuse_args &args, const QString& mountpoint)
 {
+	if(!isEnvironmentValid())
+	   return false;
+
 	stop();
 	m_fuseSession = fuse_session_new(&args, &fuse_ll_ops, sizeof(fuse_ll_ops), this);
 
@@ -1037,6 +1044,34 @@ void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_i
 	that->awaitNodeFlushed(remoteNode, [=](int error) {
 		fuse_reply_err(req, error);
 	});
+}
+
+bool KIOFuseVFS::isEnvironmentValid()
+{
+	static_assert(sizeof(off_t) >= 8, "Please compile with -D_FILE_OFFSET_BITS=64 to allow working with large (>4GB) files");
+
+#ifdef Q_OS_LINUX
+	// On 32bit Linux before "fuse: fix writepages on 32bit", writes past 4GiB were silently discarded.
+	// Technically this would have to check the kernel's bitness, but that's not easily possible.
+	if(sizeof(size_t) != sizeof(off_t))
+	{
+		struct utsname uts;
+		if(uname(&uts) != 0)
+			return false;
+
+		auto kernelversion = QVersionNumber::fromString(QLatin1String(uts.release));
+		if(kernelversion < QVersionNumber(5, 2))
+		{
+			qCritical(KIOFUSE_LOG) << "You're running kio-fuse on an older 32-bit kernel, which can lead to data loss.\n"
+			                          "Please use a newer one or make sure that the 'fuse: fix writepages on 32bit' commit "
+			                          "is part of the kernel and then build kio-fuse with this check adjusted.\n"
+			                          "If you don't know how to do that, please file a bug at your distro.";
+			return false;
+		}
+	}
+#endif
+
+	return true;
 }
 
 std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFuseNode> &parent, const QString name) const
