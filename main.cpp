@@ -22,6 +22,8 @@
 
 #include <QCoreApplication>
 
+#include <KAboutData>
+
 #include "kiofuseservice.h"
 #include "kiofuseversion.h"
 
@@ -50,6 +52,9 @@ int main(int argc, char *argv[])
 
 	QCoreApplication a(argc, argv);
 	KIOFuseService kiofuseservice;
+
+	KAboutData about(QStringLiteral("kiofuse"), QStringLiteral("FUSE Interface for KIO"), QStringLiteral(KIOFUSE_VERSION_STRING));
+	KAboutData::setApplicationData(about);
 
 	if(!kiofuseservice.start(args, QString::fromUtf8(opts.mountpoint), opts.foreground))
 		return 1;

@@ -24,8 +24,9 @@ include(ECMSetupVersion)
 find_package(PkgConfig REQUIRED)
 find_package(Qt5 ${Qt5_MIN_VERSION} COMPONENTS Core REQUIRED)
 find_package(KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS
-	KIO
+	CoreAddons
 	DBusAddons
+	KIO
 )
 pkg_check_modules(FUSE3 REQUIRED fuse3)
 
