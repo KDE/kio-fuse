@@ -23,6 +23,7 @@
 #include <QCoreApplication>
 
 #include "kiofuseservice.h"
+#include "kiofuseversion.h"
 
 int main(int argc, char *argv[])
 {
@@ -41,6 +42,7 @@ int main(int argc, char *argv[])
 	}
 	else if (opts.show_version)
 	{
+		printf("KIO FUSE version %s\n", KIOFUSE_VERSION_STRING);
 		printf("FUSE library version %s\n", fuse_pkgversion());
 		fuse_lowlevel_version();
 		return 0;
