@@ -457,6 +457,12 @@ void FileOpsTest::testRenameOps()
 	QVERIFY(overwrittenFile.open(QIODevice::ReadWrite));
 	QCOMPARE(overwrittenFile.write(QStringLiteral("data").toUtf8()), 4);
 	QVERIFY(overwrittenFile.flush());
+#ifdef RENAME_NOREPLACE
+	QCOMPARE(renameat2(AT_FDCWD, mirrorDir.filePath(QStringLiteral("dirb/fileb")).toUtf8().data(),
+	                   AT_FDCWD, mirrorDir.filePath(QStringLiteral("dirb/filec")).toUtf8().data(),
+	                   RENAME_NOREPLACE), -1);
+	QCOMPARE(errno, EEXIST);
+#endif
 	QCOMPARE(rename(mirrorDir.filePath(QStringLiteral("dirb/fileb")).toUtf8().data(),
 	                mirrorDir.filePath(QStringLiteral("dirb/filec")).toUtf8().data()), 0);
 
