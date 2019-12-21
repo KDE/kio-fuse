@@ -18,18 +18,21 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <linux/fs.h>
+#include <qglobal.h>
+
 #include <sys/types.h>
+#include <errno.h>
 #include <unistd.h>
 #include <signal.h>
+
+#ifdef Q_OS_LINUX
+#include <linux/fs.h>
+#include <sys/utsname.h>
+#endif
 
 #include <QDateTime>
 #include <QDebug>
 #include <QVersionNumber>
-
-#ifdef Q_OS_LINUX
-#include <sys/utsname.h>
-#endif
 
 #include <KIO/ListJob>
 #include <KIO/MkdirJob>
@@ -39,6 +42,15 @@
 
 #include "debug.h"
 #include "kiofusevfs.h"
+
+// Flags that don't exist on FreeBSD; since these are used as
+// bit(masks), setting them to 0 effectively means they're always unset.
+#ifndef O_NOATIME
+#define O_NOATIME 0
+#endif
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE 0
+#endif
 
 // The libfuse macros make this necessary
 #pragma GCC diagnostic ignored "-Wpedantic"
