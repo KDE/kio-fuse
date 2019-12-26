@@ -634,7 +634,7 @@ void FileOpsTest::testReadWrite4GBFile()
 	QVERIFY(localFile.open());
 
 	// Mount the temporary file
-	QDBusPendingReply reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localFile.fileName())).value();
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localFile.fileName())).value();
 	QVERIFY(!reply.isEmpty());
 
 	QFile mirroredFile(reply);
