@@ -101,6 +101,11 @@ KIOFuseRootNode ----> KIOFuseRemoteFileNode
 The root node with inode number 1 represents the root of the VFS.
 Only files below are visible in the VFS hierarchy.
 
+Note that RemoteFileNode is an abstract class. At runtime, it will actually be
+instantiated as one of its subclasses (KIOFuseRemoteCacheBasedNode or
+KIOFuseRemoteFileJobBasedNode). The type of class instantiated will depend on
+the URL of the file. Please see the "File I/O" section to learn more.
+
 Both kinds of remote nodes (KIOFuseRemoteDirNode, KIOFuseRemoteFileNode) have
 an m_overrideUrl member which is used to implement URL mountpoints and
 redirections. To get the remote URL of a node, the tree is traversed upwards
@@ -175,7 +180,19 @@ awaitChildrenComplete method in KIOFuseVFS.
 File IO
 -------
 
-File IO is implemented completely on top of a file based cache.
+File IO is done in either of two ways, depending on what the protocol supports.
+If the protocol supports KIO::open (and all of its operations, which at the time
+of writing is read/write/seek/truncate) then IO will be based upon KIO's FileJob.
+KIO's FileJob interface allows random-access IO, and hence all read, write and
+truncate requests are simply forwarded to the corresponding FileJob functions.
+
+Whilst improving performance for larger files compared to the cache-based IO
+described below, the performance of individual read/write/truncate requests
+if significantly reduced.
+
+The protocols that currently support KIO::open are file/sftp/smb.
+
+Otherwise, file IO is implemented completely on top of a file based cache.
 On the first read or write access to a non truncated file, the whole file is
 downloaded into a new temporary file and all readers are notified on cache
 completeness changes (see awaitBytesAvailable).

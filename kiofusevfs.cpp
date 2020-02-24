@@ -39,6 +39,8 @@
 #include <KIO/StatJob>
 #include <KIO/TransferJob>
 #include <KIO/DeleteJob>
+#include <KIO/FileJob>
+#include <KProtocolManager>
 
 #include "debug.h"
 #include "kiofusevfs.h"
@@ -214,7 +216,7 @@ void KIOFuseVFS::stop()
 
 	for(auto it = m_dirtyNodes.begin(); it != m_dirtyNodes.end();)
 	{
-		auto node = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(nodeForIno(*it));
+		auto node = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(nodeForIno(*it));
 
 		++it; // Increment now as awaitNodeFlushed invalidates the iterator
 
@@ -262,6 +264,11 @@ void KIOFuseVFS::fuseRequestPending()
 	}
 }
 
+void KIOFuseVFS::setUseFileJob(bool useFileJob)
+{
+	m_useFileJob = useFileJob;
+}
+
 void KIOFuseVFS::init(void *userdata, fuse_conn_info *conn)
 {
 	Q_UNUSED(userdata);
@@ -304,7 +311,8 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		fuse_reply_err(req, EOPNOTSUPP);
 		return;
 	case KIOFuseNode::NodeType::RemoteDirNode:
-	case KIOFuseNode::NodeType::RemoteFileNode:
+	case KIOFuseNode::NodeType::RemoteCacheBasedFileNode:
+	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
 	{
 		auto remoteFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
 		if((to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
@@ -341,25 +349,25 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			node->m_stat.st_ctim = attr->st_ctim;
 			to_set &= ~FUSE_SET_ATTR_CTIME;
 		}
-
-		if(to_set & FUSE_SET_ATTR_SIZE)
+		if((to_set & FUSE_SET_ATTR_SIZE) && remoteFileNode->type() == KIOFuseNode::NodeType::RemoteCacheBasedFileNode)
 		{
+			auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(remoteFileNode);
 			// Can be done directly if the new size is zero (and there is no get going on).
 			// This is an optimization to avoid fetching the entire file just to ignore its content.
-			if(!remoteFileNode->m_localCache && attr->st_size == 0)
+			if(!cacheBasedFileNode->m_localCache && attr->st_size == 0)
 			{
 				// Just create an empty file
-				remoteFileNode->m_localCache = tmpfile();
-				if(remoteFileNode->m_localCache == nullptr)
+				cacheBasedFileNode->m_localCache = tmpfile();
+				if(cacheBasedFileNode->m_localCache == nullptr)
 				{
 					fuse_reply_err(req, EIO);
 					return;
 				}
 
-				remoteFileNode->m_cacheComplete = true;
-				remoteFileNode->m_cacheSize = remoteFileNode->m_stat.st_size = 0;
-				remoteFileNode->m_stat.st_mtim = remoteFileNode->m_stat.st_ctim = tsNow;
-				that->markCacheDirty(remoteFileNode);
+				cacheBasedFileNode->m_cacheComplete = true;
+				cacheBasedFileNode->m_cacheSize = cacheBasedFileNode->m_stat.st_size = 0;
+				cacheBasedFileNode->m_stat.st_mtim = cacheBasedFileNode->m_stat.st_ctim = tsNow;
+				that->markCacheDirty(cacheBasedFileNode);
 
 				to_set &= ~FUSE_SET_ATTR_SIZE; // Done already!
 			}
@@ -396,29 +404,52 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			}
 		};
 
-		if(to_set & FUSE_SET_ATTR_SIZE)
+		if((to_set & FUSE_SET_ATTR_SIZE) && remoteFileNode->type() == KIOFuseNode::NodeType::RemoteCacheBasedFileNode)
 		{
+			auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(remoteFileNode);
 			// Have to wait until the cache is complete to truncate.
 			// Waiting until all bytes up to the truncation point are available won't work,
 			// as the fetch function would just overwrite the cache.
-			that->awaitCacheComplete(remoteFileNode, [=](int error) {
+			that->awaitCacheComplete(cacheBasedFileNode, [=] (int error) {
 				if(error)
 					sharedState->error = error;
 				else // Cache complete!
 				{
 					// Truncate the cache file
-					if(fflush(remoteFileNode->m_localCache) != 0
-					    || ftruncate(fileno(remoteFileNode->m_localCache), sharedState->value.st_size) == -1)
+					if(fflush(cacheBasedFileNode->m_localCache) != 0
+					    || ftruncate(fileno(cacheBasedFileNode->m_localCache), sharedState->value.st_size) == -1)
 						sharedState->error = errno;
 					else
 					{
-						remoteFileNode->m_cacheSize = remoteFileNode->m_stat.st_size = sharedState->value.st_size;
-						remoteFileNode->m_stat.st_mtim = remoteFileNode->m_stat.st_ctim = tsNow;
-						that->markCacheDirty(remoteFileNode);
+						cacheBasedFileNode->m_cacheSize = cacheBasedFileNode->m_stat.st_size = sharedState->value.st_size;
+						cacheBasedFileNode->m_stat.st_mtim = cacheBasedFileNode->m_stat.st_ctim = tsNow;
+						that->markCacheDirty(cacheBasedFileNode);
 					}
 				}
-
 				markOperationCompleted(FUSE_SET_ATTR_SIZE);
+			});
+		}
+		else if ((to_set & FUSE_SET_ATTR_SIZE) && remoteFileNode->type() == KIOFuseNode::NodeType::RemoteFileJobBasedFileNode)
+		{
+			auto fileJobBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(remoteFileNode);
+			auto *fileJob = KIO::open(that->remoteUrl(fileJobBasedFileNode), QIODevice::ReadWrite);
+			connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
+				// All errors come through this signal, so error-handling is done here
+				if(job->error())
+				{
+					sharedState->error = kioErrorToFuseError(job->error());
+					markOperationCompleted(FUSE_SET_ATTR_SIZE);
+				}
+			});
+			connect(fileJob, &KIO::FileJob::open, [=] {
+				fileJob->truncate(sharedState->value.st_size);
+				connect(fileJob, &KIO::FileJob::truncated, [=] {
+					fileJob->close();
+					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+						fileJobBasedFileNode->m_stat.st_size = sharedState->value.st_size;
+						markOperationCompleted(FUSE_SET_ATTR_SIZE);
+					});
+				});
 			});
 		}
 
@@ -639,6 +670,17 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 		// If node is a dir, it must be empty
 		fuse_reply_err(req, ENOTEMPTY);
 		return;
+	}
+
+	if(auto fileJobNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node))
+	{
+		// After deleting a file, the contents become inaccessible immediately,
+		// so avoid creating nameless inodes. tmpfile() semantics aren't possible with FileJob.
+		if(fileJobNode->m_openCount)
+		{
+			fuse_reply_err(req, EBUSY);
+			return;
+		}
 	}
 
 	auto *job = KIO::del(that->remoteUrl(node));
@@ -876,10 +918,11 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 	default:
 		fuse_reply_err(req, EIO);
 		return;
-	case KIOFuseNode::NodeType::RemoteFileNode:
+	case KIOFuseNode::NodeType::RemoteCacheBasedFileNode:
 	{
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-		that->awaitBytesAvailable(remoteNode, off + size, [=](int error) {
+		qDebug(KIOFUSE_LOG) << "Reading" << size << "byte(s) at offset" << off << "of (cache-based) node" << node->m_nodeName;
+		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node);
+		that->awaitBytesAvailable(remoteNode, off + size, [=] (int error) {
 			if(error != 0 && error != ESPIPE)
 			{
 				fuse_reply_err(req, error);
@@ -907,6 +950,58 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 			buf.buf[0].pos = off;
 
 			fuse_reply_data(req, &buf, fuse_buf_copy_flags{});
+
+		});
+		break;
+	}
+	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
+	{
+		qDebug(KIOFUSE_LOG) << "Reading" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
+		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
+		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadOnly);
+		connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
+			// All errors come through this signal, so error-handling is done here
+			if(job->error())
+				fuse_reply_err(req, kioErrorToFuseError(job->error()));
+		});
+		connect(fileJob, &KIO::FileJob::open, [=] {
+			fileJob->seek(off);
+			connect(fileJob, &KIO::FileJob::position, [=] (auto *job, KIO::filesize_t offset) {
+				Q_UNUSED(job);
+				if(off_t(offset) != off)
+				{
+					fileJob->close();
+					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+						fuse_reply_err(req, EIO);
+					});
+					return;
+				}
+				auto actualSize = remoteNode->m_stat.st_size = fileJob->size();
+				// Reading over the end
+				if(off >= off_t(actualSize))
+					actualSize = 0;
+				else
+					actualSize = std::min(off_t(actualSize) - off, off_t(size));
+				fileJob->read(actualSize);
+				QByteArray buffer;
+				connect(fileJob, &KIO::FileJob::data, [=] (auto *readJob, const QByteArray &data) mutable {
+					Q_UNUSED(readJob);
+					QByteArray truncatedData = data.left(actualSize);
+					buffer.append(truncatedData);
+					actualSize -= truncatedData.size();
+
+					if(actualSize > 0)
+					{
+						// Keep reading until we get all the data we need.
+						fileJob->read(actualSize);
+						return;
+					}
+					fileJob->close();
+					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+						fuse_reply_buf(req, buffer.constData(), buffer.size());
+					});
+				});
+			});
 		});
 		break;
 	}
@@ -935,14 +1030,13 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 	default:
 		fuse_reply_err(req, EIO);
 		return;
-
-	case KIOFuseNode::NodeType::RemoteFileNode:
+	case KIOFuseNode::NodeType::RemoteCacheBasedFileNode:
 	{
+		qDebug(KIOFUSE_LOG) << "Writing" << size << "byte(s) at offset" << off << "of (cache-based) node" << node->m_nodeName;
 		QByteArray data(buf, size); // Copy data
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-
-		// fi lives on the caller's stack, make a copy
-		auto fuseReplyCallback = [=, fi_flags=fi->flags] (int error) {
+		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node);
+		// fi lives on the caller's stack make a copy.
+		auto cacheBasedWriteCallback = [=, fi_flags=fi->flags] (int error) {
 			if(error && error != ESPIPE)
 			{
 				fuse_reply_err(req, error);
@@ -972,9 +1066,57 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 
 		if(fi->flags & O_APPEND)
 			// Wait for cache to be complete to ensure valid m_cacheSize
-			that->awaitCacheComplete(remoteNode, fuseReplyCallback);
+			that->awaitCacheComplete(remoteNode, cacheBasedWriteCallback);
 		else
-			that->awaitBytesAvailable(remoteNode, off + size, fuseReplyCallback);
+			that->awaitBytesAvailable(remoteNode, off + size, cacheBasedWriteCallback);
+		break;
+	}
+	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
+	{
+		qDebug(KIOFUSE_LOG) << "Writing" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
+		QByteArray data(buf, size); // Copy data
+		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
+		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadWrite);
+		connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
+			// All errors come through this signal, so error-handling is done here
+			if(job->error())
+				fuse_reply_err(req, kioErrorToFuseError(job->error()));
+		});
+		connect(fileJob, &KIO::FileJob::open, [=, fi_flags=fi->flags] {
+			off_t offset = (fi_flags & O_APPEND) ? fileJob->size() : off;
+			fileJob->seek(offset);
+			connect(fileJob, &KIO::FileJob::position, [=] (auto *job, KIO::filesize_t offset) {
+				Q_UNUSED(job);
+				if (off_t(offset) != off) {
+					fileJob->close();
+					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+						fuse_reply_err(req, EIO);
+					});
+					return;
+				}
+				// Limit write to avoid killing the slave.
+				// @see https://phabricator.kde.org/D15448
+				fileJob->write(data.left(0xFFFFFF));
+				off_t bytesLeft = size;
+				connect(fileJob, &KIO::FileJob::written, [=] (auto *writeJob, KIO::filesize_t written) mutable {
+					Q_UNUSED(writeJob);
+					bytesLeft -= written;
+					if (bytesLeft > 0)
+					{
+						// Keep writing until we write all the data we need.
+						fileJob->write(data.mid(size - bytesLeft, 0xFFFFFF));
+						return;
+					}
+					fileJob->close();
+					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+						// Wait till we've flushed first...
+						remoteNode->m_stat.st_size = std::max(off_t(offset + data.size()), remoteNode->m_stat.st_size);
+						fuse_reply_write(req, data.size());
+					});
+				});
+			});
+		});
+		break;
 	}
 	}
 }
@@ -1003,7 +1145,7 @@ void KIOFuseVFS::release(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 
 	fuse_reply_err(req, 0); // Ignored anyway
 
-	auto remoteFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
+	auto remoteFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node);
 	if(node->m_openCount || !remoteFileNode || !remoteFileNode->m_localCache)
 		return; // Nothing to do
 
@@ -1046,16 +1188,12 @@ void KIOFuseVFS::fsync(fuse_req_t req, fuse_ino_t ino, int datasync, fuse_file_i
 		return;
 	}
 
-	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-	if(!remoteNode)
-	{
+	if(auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
+		that->awaitNodeFlushed(cacheBasedFileNode, [=](int error) {
+			fuse_reply_err(req, error);
+		});
+	else
 		fuse_reply_err(req, 0);
-		return;
-	}
-
-	that->awaitNodeFlushed(remoteNode, [=](int error) {
-		fuse_reply_err(req, error);
-	});
 }
 
 bool KIOFuseVFS::isEnvironmentValid()
@@ -1403,8 +1541,13 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 		else // Regular file pointing to URL
 		{
 			attr.st_mode |= S_IFREG;
-			auto ret = std::make_shared<KIOFuseRemoteFileNode>(parentIno, name, attr);
-			ret->m_overrideUrl = QUrl{entry.stringValue(KIO::UDSEntry::UDS_URL)};
+			std::shared_ptr<KIOFuseRemoteFileNode> ret = nullptr;
+			const QUrl nodeUrl = QUrl::fromLocalFile(entry.stringValue(KIO::UDSEntry::UDS_URL));
+			if(m_useFileJob && KProtocolManager::supportsOpening(nodeUrl) && KProtocolManager::supportsTruncating(nodeUrl))
+				ret = std::make_shared<KIOFuseRemoteFileJobBasedFileNode>(parentIno, name, attr);
+			else
+				ret = std::make_shared<KIOFuseRemoteCacheBasedFileNode>(parentIno, name, attr);
+			ret->m_overrideUrl = nodeUrl;
 			return ret;
 		}
 	}
@@ -1424,11 +1567,15 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	else // it's a regular file
 	{
 		attr.st_mode |= S_IFREG;
-		return std::make_shared<KIOFuseRemoteFileNode>(parentIno, name, attr);
+		const QUrl nodeUrl = remoteUrl(nodeForIno(parentIno));
+		if(m_useFileJob && KProtocolManager::supportsOpening(nodeUrl) && KProtocolManager::supportsTruncating(nodeUrl))
+			return std::make_shared<KIOFuseRemoteFileJobBasedFileNode>(parentIno, name, attr);
+		else
+			return std::make_shared<KIOFuseRemoteCacheBasedFileNode>(parentIno, name, attr);
 	}
 }
 
-void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, off_t bytes, std::function<void(int error)> callback)
+void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, std::function<void(int error)> callback)
 {
 	if(bytes < 0)
 	{
@@ -1500,7 +1647,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 	// Using a unique_ptr here to let the lambda disconnect the connection itself
 	auto connection = std::make_unique<QMetaObject::Connection>();
 	auto &conn = *connection;
-	conn = connect(node.get(), &KIOFuseRemoteFileNode::localCacheChanged,
+	conn = connect(node.get(), &KIOFuseRemoteCacheBasedFileNode::localCacheChanged,
 	               [=, connection = std::move(connection)](int error) {
 		if(error)
 		{
@@ -1523,7 +1670,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode
 	);
 }
 
-void KIOFuseVFS::awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void (int)> callback)
 {
 	return awaitBytesAvailable(node, std::numeric_limits<off_t>::max(), [callback](int error) {
 		// ESPIPE == cache complete, but less than the requested size, which is expected.
@@ -1731,7 +1878,7 @@ QUrl KIOFuseVFS::makeOriginUrl(QUrl url)
 	return url;
 }
 
-void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &node)
+void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node)
 {
 	if(node->m_cacheDirty)
 		return; // Already dirty, nothing to do
@@ -1740,7 +1887,7 @@ void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &no
 	m_dirtyNodes.insert(node->m_stat.st_ino);
 }
 
-void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void (int)> callback)
 {
 	if(!node->m_cacheDirty && !node->m_flushRunning)
 		return callback(0); // Nothing to flush/wait for
@@ -1836,7 +1983,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &
 	// Using a unique_ptr here to let the lambda disconnect the connection itself
 	auto connection = std::make_unique<QMetaObject::Connection>();
 	auto &conn = *connection;
-	conn = connect(node.get(), &KIOFuseRemoteFileNode::cacheFlushed,
+	conn = connect(node.get(), &KIOFuseRemoteCacheBasedFileNode::cacheFlushed,
 	               [=, connection = std::move(connection)](int error) {
 		callback(error);
 		node->disconnect(*connection);

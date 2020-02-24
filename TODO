@@ -20,13 +20,15 @@ Performance/usability improvements:
 - Better error reporting:
   * Flushing happens on close(), which can't report errors, so it might be a good idea to show
     a notification to the user if it fails
-- Look into using KIO::read/KIO::write if possible:
-  * Needs ::open to succeed, has state per slave (?)
-  * Does not support truncation, so either a fallback to ::put or support in KIO is necessary
 - Improve usability with large files over a slow connection (e.g. VM disk images):
   * Don't cache too large files - might DoS the system. Determining the mime type of a single VM disk
     fills /tmp (or wherever nodes created with tmpfile() reside in). Those files are impractical
 	to handle without KIO::read/KIO::write.
+- Re-introduce writeback-caching, which would improve performance of FileJob-based IO.
+  Currently disabled due to design issues upstream (fuse/libfuse). See discussion:
+  * https://sourceforge.net/p/fuse/mailman/message/36524459/
+  * https://sourceforge.net/p/fuse/mailman/message/36878595/
+  * https://git.kernel.org/pub/scm/linux/kernel/git/mszeredi/fuse.git/tree/Documentation/filesystems/fuse-io.txt?id=5ba24197b
 Bugfixes:
 - Check whether write access works before writing into the cache:
   Currently write access it not explicitly checked at all, possibly leading to data loss

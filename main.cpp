@@ -17,7 +17,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
 #include <fuse_lowlevel.h>
 
 #include <QCoreApplication>
@@ -27,11 +26,28 @@
 #include "kiofuseservice.h"
 #include "kiofuseversion.h"
 
+// Put all custom arguments in here.
+// @see https://github.com/libfuse/libfuse/wiki/Option-Parsing
+struct kiofuse_config {
+	int useFileJob = 1; // on by default
+};
+
+#define KIOFUSE_OPT(t, p, v) { t, offsetof(struct kiofuse_config, p), v }
+
+static struct fuse_opt kiofuse_opts[] = {
+	KIOFUSE_OPT("--disable-filejob-io", useFileJob, 0),
+	FUSE_OPT_END
+};
+
+#undef KIOFUSE_OPT
+
 int main(int argc, char *argv[])
 {
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+	struct kiofuse_config conf;
 	struct fuse_cmdline_opts opts;
 
+	fuse_opt_parse(&args, &conf, kiofuse_opts, nullptr);
 	if (fuse_parse_cmdline(&args, &opts) != 0)
 		return 1;
 
@@ -40,6 +56,7 @@ int main(int argc, char *argv[])
 		printf("Usage: %s [options] <mountpoint>\n\n", argv[0]);
 		fuse_cmdline_help();
 		fuse_lowlevel_help();
+		printf("    --disable-filejob-io   Don't use FileJob-based (KIO::open) I/O\n");
 		return 0;
 	}
 	else if (opts.show_version)
@@ -56,6 +73,7 @@ int main(int argc, char *argv[])
 	KAboutData about(QStringLiteral("kiofuse"), QStringLiteral("FUSE Interface for KIO"), QStringLiteral(KIOFUSE_VERSION_STRING));
 	KAboutData::setApplicationData(about);
 
+	kiofuseservice.kiofusevfs.setUseFileJob(conf.useFileJob);
 	if(!kiofuseservice.start(args, QString::fromUtf8(opts.mountpoint), opts.foreground))
 		return 1;
 

@@ -29,6 +29,8 @@
 #include <QUrl>
 #include <QString>
 
+#include <KIO/FileJob>
+
 class KIOFuseNode {
 public:
 	// Creates a new node. Make sure to set the node's m_stat.st_ino once inserted.
@@ -48,8 +50,9 @@ public:
 		LastDirType = RemoteDirNode,
 
 		// File types
-		RemoteFileNode,
 		RemoteSymlinkNode,
+		RemoteCacheBasedFileNode,
+		RemoteFileJobBasedFileNode,
 	};
 
 	// By having this as a virtual method instead of a class member
@@ -106,15 +109,22 @@ Q_SIGNALS:
 	void gotChildren(int error);
 };
 
-class KIOFuseRemoteFileNode : public QObject, public KIOFuseNode {
-	Q_OBJECT
+class KIOFuseRemoteFileNode : public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
-	~KIOFuseRemoteFileNode() {
+	// Override the URL (used for UDS_URL)
+	QUrl m_overrideUrl;
+};
+
+class KIOFuseRemoteCacheBasedFileNode : public QObject, public KIOFuseRemoteFileNode {
+	Q_OBJECT
+public:
+	using KIOFuseRemoteFileNode::KIOFuseRemoteFileNode;
+	~KIOFuseRemoteCacheBasedFileNode() {
 		if(m_localCache)
 			fclose(m_localCache);
 	}
-	static const NodeType Type = NodeType::RemoteFileNode;
+	static const NodeType Type = NodeType::RemoteCacheBasedFileNode;
 	NodeType type() const override { return Type; }
 	// Cache information
 	bool cacheIsComplete() { return m_cacheComplete; }
@@ -125,13 +135,20 @@ public:
 	     m_flushRunning = false; // If a flush is currently running
 	int m_numKilledJobs = 0; // reset on successful flush, incremented every time job is killed because cache is dirty (among other factors)
 
-	// Override the URL (used for UDS_URL)
-	QUrl m_overrideUrl;
 Q_SIGNALS:
 	// Emitted when a download operation on this node made progress, finished or failed.
 	void localCacheChanged(int error);
 	// Emitted after finishing (successful or not) a cache flush on this node
 	void cacheFlushed(int error);
+};
+
+
+class KIOFuseRemoteFileJobBasedFileNode : public QObject, public KIOFuseRemoteFileNode {
+	Q_OBJECT
+public:
+	using KIOFuseRemoteFileNode::KIOFuseRemoteFileNode;
+	static const NodeType Type = NodeType::RemoteFileJobBasedFileNode;
+	NodeType type() const override { return Type; }
 };
 
 class KIOFuseSymLinkNode : public QObject, public KIOFuseNode {
