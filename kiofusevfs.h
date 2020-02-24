@@ -61,6 +61,8 @@ public:
 	bool start(fuse_args &args, const QString& mountpoint);
 	/** Umounts the filesystem (if necessary) and flushes dirty nodes. */
 	void stop();
+	/** Designates whether KIOFuse should perform FileJob-based (KIO::open) I/O where possible. */
+	void setUseFileJob(bool useFileJob);
 	/** Runs KIO::stat on url and adds a node to the tree if successful. Calls the callback at the end. */
 	void mountUrl(QUrl url, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
 	/** Returns the path upwards until a root node. */
@@ -140,16 +142,16 @@ private:
 
 	/** Invokes callback on error or when the bytes are available for reading/writing.
 	  * If the file is smaller than bytes, it sets error = ESPIPE. */
-	void awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteFileNode> &node, off_t bytes, std::function<void(int error)> callback);
+	void awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, std::function<void(int error)> callback);
 	/** Invokes callback on error or when the cache is marked as complete. */
-	void awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void(int error)> callback);
+	void awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void(int error)> callback);
 	/** Invokes callback on error or when all children nodes are available */
 	void awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void(int error)> callback);
 	/** Marks a node's cache as dirty and add it to m_dirtyNodes. */
-	void markCacheDirty(const std::shared_ptr<KIOFuseRemoteFileNode> &node);
+	void markCacheDirty(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node);
 	/** Calls the callback once the cache is not dirty anymore (no cache counts as clean as well).
 	  * If writes happen while a flush is sending data, a flush will be retriggered. */
-	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteFileNode> &node, std::function<void(int error)> callback);
+	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void(int error)> callback);
 
 	/** Returns the override URL for an origin node */
 	QUrl makeOriginUrl(QUrl url);
@@ -182,4 +184,7 @@ private:
 	std::unordered_map<fuse_ino_t, std::shared_ptr<KIOFuseNode>> m_nodes;
 	/** Set of all nodes with a dirty cache. */
 	std::set<fuse_ino_t> m_dirtyNodes;
+
+	/** @see setUseFileJob() */
+	bool m_useFileJob;
 };

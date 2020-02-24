@@ -39,6 +39,7 @@ public:
 	/** Attempts to register the service and start kiofusevfs. If both succeed,
 	  * returns true, false otherwise. */
 	bool start(struct fuse_args &args, QString mountpoint, bool foreground);
+	KIOFuseVFS kiofusevfs;
 
 public Q_SLOTS:
 	/** Mounts a URL onto the filesystem, and returns the local path back. */
@@ -51,7 +52,6 @@ private:
 	/** Daemonizes the kio-fuse process, whilst also managing the registration of the org.kde.KIOFuse service.
 	  * Derived from fuse_daemonize() in libfuse. */
 	bool registerServiceDaemonized();
-	KIOFuseVFS kiofusevfs;
 	/** where kiofusevfs is mounted */
 	QString m_mountpoint;
 	/** tempdir created if user does not specify mountpoint */

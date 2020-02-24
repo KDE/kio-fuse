@@ -66,7 +66,6 @@ private:
 	QTemporaryDir m_mountDir;
 };
 
-
 void FileOpsTest::initTestCase()
 {
 	// QTemporaryDir would otherwise rm -rf on destruction,
@@ -76,7 +75,11 @@ void FileOpsTest::initTestCase()
 
 	QProcess kiofuseProcess;
 	kiofuseProcess.setProgram(programpath);
+#ifdef TEST_CACHE_BASED_IO
+	kiofuseProcess.setArguments(QStringList() << m_mountDir.path() << QStringLiteral("--disable-filejob-io"));
+#else
 	kiofuseProcess.setArguments({m_mountDir.path()});
+#endif
 	kiofuseProcess.setProcessChannelMode(QProcess::ForwardedChannels);
 
 	kiofuseProcess.start();
@@ -463,17 +466,22 @@ void FileOpsTest::testRenameOps()
 	                   RENAME_NOREPLACE), -1);
 	QCOMPARE(errno, EEXIST);
 #endif
+
 	QCOMPARE(rename(mirrorDir.filePath(QStringLiteral("dirb/fileb")).toUtf8().data(),
 	                mirrorDir.filePath(QStringLiteral("dirb/filec")).toUtf8().data()), 0);
-
 	QVERIFY(!QFile::exists(localDir.filePath(QStringLiteral("dirb/fileb"))));
 	QVERIFY(QFile::exists(localDir.filePath(QStringLiteral("dirb/filec"))));
 	QVERIFY(!QFile::exists(mirrorDir.filePath(QStringLiteral("dirb/fileb"))));
 	QVERIFY(QFile::exists(mirrorDir.filePath(QStringLiteral("dirb/filec"))));
 
-	// Both handles must still be valid
 	QVERIFY(overwrittenFile.seek(0));
+#ifdef TEST_CACHE_BASED_IO
+	// Both handles must still be valid
 	QCOMPARE(overwrittenFile.readAll(), QStringLiteral("data").toUtf8());
+#else
+	// Doesn't apply to FileJob (KIO::open) I/O
+	QCOMPARE(overwrittenFile.readAll(), QStringLiteral("").toUtf8());
+#endif
 
 	localFile.close();
 	localFile.setFileName(localDir.filePath(QStringLiteral("dirb/filec")));
@@ -513,6 +521,7 @@ void FileOpsTest::testDeletionOps()
 	QCOMPARE(rmdir(dir.path().toUtf8().data()), -1);
 	QCOMPARE(errno, ENOTEMPTY);
 
+#ifdef TEST_CACHE_BASED_IO
 	// Delete the file
 	QCOMPARE(rmdir(file.fileName().toUtf8().data()), -1);
 	QCOMPARE(errno, ENOTDIR);
@@ -532,6 +541,17 @@ void FileOpsTest::testDeletionOps()
 	// Make sure the file is still open
 	QVERIFY(file.seek(0));
 	QCOMPARE(file.readAll(), QStringLiteral("someweirdstring").toUtf8());
+#else
+	// FileJob-based nodes only unlink if the file isn't open
+	QCOMPARE(rmdir(file.fileName().toUtf8().data()), -1);
+	QCOMPARE(errno, ENOTDIR);
+	QCOMPARE(unlink(file.fileName().toUtf8().data()), -1);
+	file.close();
+	QCOMPARE(unlink(file.fileName().toUtf8().data()), 0);
+	QVERIFY(!file.exists());
+	QVERIFY(!QFile::exists(localDir.filePath(QStringLiteral("dir/file"))));
+#endif
+
 
 	// Not implemented: Link the file back into the tree, if possible
 	// QCOMPARE(link(QStringLiteral("/proc/self/fd/%1").arg(file.handle()).toUtf8().data(),
