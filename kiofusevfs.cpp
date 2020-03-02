@@ -971,7 +971,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 				if(off_t(offset) != off)
 				{
 					fileJob->close();
-					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
 						fuse_reply_err(req, EIO);
 					});
 					return;
@@ -984,7 +984,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 					actualSize = std::min(off_t(actualSize) - off, off_t(size));
 				fileJob->read(actualSize);
 				QByteArray buffer;
-				connect(fileJob, &KIO::FileJob::data, [=] (auto *readJob, const QByteArray &data) mutable {
+				fileJob->connect(fileJob, &KIO::FileJob::data, [=] (auto *readJob, const QByteArray &data) mutable {
 					Q_UNUSED(readJob);
 					QByteArray truncatedData = data.left(actualSize);
 					buffer.append(truncatedData);
@@ -997,7 +997,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 						return;
 					}
 					fileJob->close();
-					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
 						fuse_reply_buf(req, buffer.constData(), buffer.size());
 					});
 				});
@@ -1089,7 +1089,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 				Q_UNUSED(job);
 				if (off_t(offset) != off) {
 					fileJob->close();
-					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
 						fuse_reply_err(req, EIO);
 					});
 					return;
@@ -1098,7 +1098,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 				// @see https://phabricator.kde.org/D15448
 				fileJob->write(data.left(0xFFFFFF));
 				off_t bytesLeft = size;
-				connect(fileJob, &KIO::FileJob::written, [=] (auto *writeJob, KIO::filesize_t written) mutable {
+				fileJob->connect(fileJob, &KIO::FileJob::written, [=] (auto *writeJob, KIO::filesize_t written) mutable {
 					Q_UNUSED(writeJob);
 					bytesLeft -= written;
 					if (bytesLeft > 0)
@@ -1108,7 +1108,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 						return;
 					}
 					fileJob->close();
-					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
 						// Wait till we've flushed first...
 						remoteNode->m_stat.st_size = std::max(off_t(offset + data.size()), remoteNode->m_stat.st_size);
 						fuse_reply_write(req, data.size());
