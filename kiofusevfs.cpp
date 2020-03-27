@@ -1542,7 +1542,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 		{
 			attr.st_mode |= S_IFREG;
 			std::shared_ptr<KIOFuseRemoteFileNode> ret = nullptr;
-			const QUrl nodeUrl = QUrl::fromLocalFile(entry.stringValue(KIO::UDSEntry::UDS_URL));
+			const QUrl nodeUrl = QUrl{entry.stringValue(KIO::UDSEntry::UDS_URL)};
 			if(m_useFileJob && KProtocolManager::supportsOpening(nodeUrl) && KProtocolManager::supportsTruncating(nodeUrl))
 				ret = std::make_shared<KIOFuseRemoteFileJobBasedFileNode>(parentIno, name, attr);
 			else
