@@ -155,6 +155,8 @@ private:
 
 	/** Returns the override URL for an origin node */
 	QUrl makeOriginUrl(QUrl url);
+	/** If authority of URL is null, adds an empty authority instead */
+	QUrl sanitizeNullAuthority(QUrl url) const;
     
 	/** Returns the corresponding FUSE error to the given KIO Job error */
 	static int kioErrorToFuseError(const int kioError);
