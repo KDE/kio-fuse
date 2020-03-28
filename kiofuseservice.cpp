@@ -78,6 +78,26 @@ bool KIOFuseService::start(struct fuse_args &args, QString mountpoint, bool fore
 		return registerServiceDaemonized();
 }
 
+QString KIOFuseService::remoteUrl(const QString& localPath)
+{
+	// Massage URL into something KIOFuseVFS may understand.
+	QDir mountpoint(m_mountpoint);
+	QString relativePath = mountpoint.relativeFilePath(localPath);
+	// If relativePath is empty or starts with ../, this would get error out
+	QUrl remoteUrl = kiofusevfs.localPathToRemoteUrl(relativePath);
+
+	if(remoteUrl.isEmpty())
+	{
+		sendErrorReply(
+			QStringLiteral("org.kde.KIOFuse.VFS.Error.RemoteURLNotFound"),
+			QStringLiteral("The given path does not have a remote URL equivalent: %1").arg(localPath)
+		);
+		return QString();
+	}
+
+	return remoteUrl.toString(QUrl::RemovePassword);
+}
+
 QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& message)
 {
 	message.setDelayedReply(true);

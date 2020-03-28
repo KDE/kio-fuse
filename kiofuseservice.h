@@ -24,12 +24,13 @@
 
 #include <QObject>
 #include <QDBusMessage>
+#include <QDBusContext>
 #include <QTemporaryDir>
 #include <QStandardPaths>
 
 #include "kiofusevfs.h"
 
-class KIOFuseService : public QObject
+class KIOFuseService : public QObject, protected QDBusContext
 {
 	Q_OBJECT
 	Q_CLASSINFO("D-Bus Interface", "org.kde.KIOFuse.VFS")
@@ -44,6 +45,8 @@ public:
 public Q_SLOTS:
 	/** Mounts a URL onto the filesystem, and returns the local path back. */
 	QString mountUrl(const QString &remoteUrl, const QDBusMessage &message);
+	/** Converts a local path into a remote URL if it is mounted within the VFS */
+	QString remoteUrl(const QString &localPath);
 
 private:
 	/** Registers the kio-fuse process as the org.kde.KIOFuse service.

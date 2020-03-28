@@ -46,6 +46,7 @@ private Q_SLOTS:
 	void cleanupTestCase();
 
 	void testDBusErrorReply();
+	void testLocalPathToRemoteUrl();
 	void testLocalFileOps();
 	void testLocalDirOps();
 	void testCreationOps();
@@ -117,6 +118,30 @@ void FileOpsTest::testDBusErrorReply()
 	reply.waitForFinished();
 	QVERIFY(reply.isError());
 	QCOMPARE(reply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.SchemeNotSupported"));
+}
+
+void FileOpsTest::testLocalPathToRemoteUrl()
+{
+	QDBusPendingReply<QString> errorReply;
+	// mtp:/ -> Remote URL can't possibly be location of KIOFuse mount.
+	// / -> Root can't possibly be location of KIOFuse mount.
+	// m_mountDir -> Whilst this is in the KIOFuse mount, no remote URL exists for it
+	for(auto url : {QStringLiteral("mtp:/"), QStringLiteral("/"), m_mountDir.path()})
+	{
+		errorReply = m_kiofuse_iface.remoteUrl(url);
+		errorReply.waitForFinished();
+		QVERIFY2(errorReply.isError(), qPrintable(url));
+		QCOMPARE(errorReply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.RemoteURLNotFound"));
+	}
+
+	QTemporaryFile localFile;
+	QVERIFY(localFile.open());
+	localFile.close(); // Force creation of file to avoid empty fileName()
+	QString remoteUrl = QStringLiteral("file://%1").arg(localFile.fileName());
+	QString reply = m_kiofuse_iface.mountUrl(remoteUrl).value();
+	QVERIFY(!reply.isEmpty());
+	QString calculatedRemoteUrl = m_kiofuse_iface.remoteUrl(reply).value();
+	QCOMPARE(remoteUrl, calculatedRemoteUrl);
 }
 
 void FileOpsTest::testLocalFileOps()
