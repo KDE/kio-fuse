@@ -1360,6 +1360,18 @@ fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node, fuse
 	return ino;
 }
 
+QUrl KIOFuseVFS::localPathToRemoteUrl(const QString& localPath) const
+{
+	auto node = nodeForIno(KIOFuseIno::Root);
+	for (const auto &segment : localPath.split(QStringLiteral("/")))
+	{
+		 node = nodeByName(node, segment);
+		 if(!node)
+			 return {};
+	}
+	return remoteUrl(node);
+}
+
 QUrl KIOFuseVFS::sanitizeNullAuthority(QUrl url) const
 {
 	// Workaround to allow url with scheme "file"

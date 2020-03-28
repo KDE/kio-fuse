@@ -65,6 +65,8 @@ public:
 	void setUseFileJob(bool useFileJob);
 	/** Runs KIO::stat on url and adds a node to the tree if successful. Calls the callback at the end. */
 	void mountUrl(QUrl url, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
+	/** Converts a local path into a remote URL if it is mounted within the VFS */
+	QUrl localPathToRemoteUrl(const QString &localPath) const;
 	/** Returns the path upwards until a root node. */
 	QString virtualPath(const std::shared_ptr<KIOFuseNode> &node) const;
 

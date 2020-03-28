@@ -5,5 +5,9 @@
       <arg name="remoteUrl" type="s" direction="in"/>
       <arg type="s" direction="out"/>
     </method>
+    <method name="remoteUrl">
+      <arg name="localPath" type="s" direction="in"/>
+      <arg type="s" direction="out"/>
+    </method>
   </interface>
 </node>
