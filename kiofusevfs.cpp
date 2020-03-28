@@ -665,7 +665,7 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 		fuse_reply_err(req, ENOTDIR);
 		return;
 	}
-	else if(dirNode	&& dirNode->m_childrenInos.size() != 0)
+	else if(dirNode	&& !dirNode->m_childrenInos.empty())
 	{
 		// If node is a dir, it must be empty
 		fuse_reply_err(req, ENOTEMPTY);
@@ -805,7 +805,7 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 			fuse_reply_err(req, ENOTDIR);
 			return;
 		}
-		if(replacedDir && replacedDir->m_childrenInos.size() != 0)
+		if(replacedDir && !replacedDir->m_childrenInos.empty())
 		{
 			fuse_reply_err(req, ENOTEMPTY);
 			return;
