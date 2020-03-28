@@ -1360,13 +1360,25 @@ fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node, fuse
 	return ino;
 }
 
+QUrl KIOFuseVFS::sanitizeNullAuthority(QUrl url) const
+{
+	// Workaround to allow url with scheme "file"
+	// to have a path that starts with "//"
+	// Without this patch...
+	// file: + //tmp = invalid URL
+	// file:// + //tmp = file////tmp
+	if(url.authority().isNull())
+		url.setAuthority(QStringLiteral(""));
+	return url;
+}
+
 QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 {
 	// Special handling for KIOFuseRemoteFileNode
 	if(auto remoteFileNode = std::dynamic_pointer_cast<const KIOFuseRemoteFileNode>(node))
 	{
 		if(!remoteFileNode->m_overrideUrl.isEmpty())
-			return remoteFileNode->m_overrideUrl;
+			return sanitizeNullAuthority(remoteFileNode->m_overrideUrl);
 	}
 
 	QStringList path;
@@ -1376,7 +1388,7 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 		if(remoteDirNode && !remoteDirNode->m_overrideUrl.isEmpty())
 		{
 			// Origin found - add path and return
-			QUrl url = remoteDirNode->m_overrideUrl;
+			QUrl url = sanitizeNullAuthority(remoteDirNode->m_overrideUrl);
 			url.setPath(url.path() + path.join(QLatin1Char('/')), QUrl::DecodedMode);
 			return url;
 		}
