@@ -4,11 +4,8 @@ Filesystem features:
 - Handle more FUSE ops:
   * link (to allow relinking of deleted nodes only, like O_TMPFILE)
   * statvfs (?)
-  * ACLs (?)
   * interrupting requests (just killing the KIO Job would also break other requests for the
     same resource)
-- Umount support:
-  Might not even be necessary - except for the nodes in RAM it does not use any resources
 KIO Slave support:
 - Deal with invalid size reporting slaves (http/gdrive/...)?
 Performance/usability improvements:
