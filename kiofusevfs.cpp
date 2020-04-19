@@ -1394,17 +1394,10 @@ QUrl KIOFuseVFS::sanitizeNullAuthority(QUrl url) const
 
 QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 {
-	// Special handling for KIOFuseRemoteFileNode
-	if(auto remoteFileNode = std::dynamic_pointer_cast<const KIOFuseRemoteFileNode>(node))
-	{
-		if(!remoteFileNode->m_overrideUrl.isEmpty())
-			return sanitizeNullAuthority(remoteFileNode->m_overrideUrl);
-	}
-
 	QStringList path;
 	for(const KIOFuseNode *currentNode = node.get(); currentNode != nullptr; currentNode = nodeForIno(currentNode->m_parentIno).get())
 	{
-		auto remoteDirNode = dynamic_cast<const KIOFuseRemoteDirNode*>(currentNode);
+		auto remoteDirNode = dynamic_cast<const KIOFuseRemoteNodeInfo*>(currentNode);
 		if(remoteDirNode && !remoteDirNode->m_overrideUrl.isEmpty())
 		{
 			// Origin found - add path and return
