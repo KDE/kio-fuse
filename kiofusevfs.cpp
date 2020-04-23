@@ -139,6 +139,11 @@ static bool sane_read(int fd, void *buf, size_t count)
 	return true;
 }
 
+static bool operator <(const struct timespec &a, const struct timespec &b)
+{
+	return (a.tv_sec == b.tv_sec) ? (a.tv_nsec < b.tv_nsec) : (a.tv_sec < b.tv_sec);
+}
+
 int KIOFuseVFS::signalFd[2];
 
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
@@ -1602,6 +1607,8 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 
 void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node, const KIO::UDSEntry &entry)
 {
+	qDebug(KIOFUSE_LOG) << "Updating attributes of" << node->m_nodeName;
+
 	// Updating a node works by creating a new node and merging their attributes
 	// (both m_stat and certain other class attributes) together.
 	// This is broadly done with node->m_stat = newNode->m_stat;
@@ -1609,7 +1616,9 @@ void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node
 	// new node into the node to be updated and so we update newNode as
 	// appropriate before merging.
 	auto newNode = createNodeFromUDSEntry(entry, node->m_parentIno, node->m_nodeName);
-	if (!newNode || newNode->type() != node->type())
+	if (!newNode || newNode->type() != node->type()
+	       // Can't happen, but better make sure.
+	    || (node->m_stat.st_mode & S_IFMT) != (newNode->m_stat.st_mode & S_IFMT))
 	{
 		qWarning(KIOFUSE_LOG) << "Not possible to update" << node->m_nodeName;
 		return;
@@ -1623,28 +1632,24 @@ void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node
 		return;
 	}
 
-	// Only change if time is newer than we have
-	if (newNode->m_stat.st_mtim.tv_sec < node->m_stat.st_mtim.tv_sec)
-	{
-		newNode->m_stat.st_mtim.tv_sec = node->m_stat.st_mtim.tv_sec;
-		newNode->m_stat.st_mtim.tv_nsec = node->m_stat.st_mtim.tv_nsec;
-	}
-	if (newNode->m_stat.st_atim.tv_sec < node->m_stat.st_atim.tv_sec)
-	{
-		newNode->m_stat.st_atim.tv_sec = node->m_stat.st_atim.tv_sec;
-		newNode->m_stat.st_atim.tv_nsec = node->m_stat.st_atim.tv_nsec;
-	}
+	const bool newMtimNewer = node->m_stat.st_mtim < newNode->m_stat.st_mtim;
+	// Take the newer time value
+	if (!newMtimNewer)
+		newNode->m_stat.st_mtim = node->m_stat.st_mtim;
+
+	if (newNode->m_stat.st_atim < node->m_stat.st_atim)
+		newNode->m_stat.st_atim = node->m_stat.st_atim;
 
 	if (auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
 	{
-		if(cacheBasedFileNode->m_stat.st_size != newNode->m_stat.st_size)
+		if(newMtimNewer || newNode->m_stat.st_size != node->m_stat.st_size)
 		{
 			// Someone has changed something server side, lets get those changes.
 			if(cacheBasedFileNode->m_cacheDirty || cacheBasedFileNode->m_flushRunning)
 			{
-				// This is undefined territory at this point...
-				// Two people have changed the file at the same time, we can't resolve this...
-				qWarning(KIOFUSE_LOG) << cacheBasedFileNode->m_nodeName << "cache is dirty but file has also been changed by something else";
+				if(newMtimNewer)
+					qWarning(KIOFUSE_LOG) << cacheBasedFileNode->m_nodeName << "cache is dirty but file has also been changed by something else";
+
 				newNode->m_stat.st_size = cacheBasedFileNode->m_stat.st_size;
 			}
 			else if(cacheBasedFileNode->m_localCache && cacheBasedFileNode->cacheIsComplete())
@@ -1665,8 +1670,10 @@ void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node
 	}
 
 	oldRemoteNode->m_lastStatRefresh = std::chrono::steady_clock::now();
-	// TODO: Can this be done safely? Maybe check oldRemoteNode->m_overrideUrl.isEmpty().
-	oldRemoteNode->m_overrideUrl = newRemoteNode->m_overrideUrl;
+
+	// oldRemoteNode->m_overrideUrl could've been set by mountUrl, don't clear it
+	if (!newRemoteNode->m_overrideUrl.isEmpty())
+		oldRemoteNode->m_overrideUrl = newRemoteNode->m_overrideUrl;
 
 	// Preserve the inode number
 	newNode->m_stat.st_ino = node->m_stat.st_ino;
@@ -1889,13 +1896,15 @@ bool KIOFuseVFS::dropNodeIfEligible(std::shared_ptr<KIOFuseNode> &node)
 	if(!canDropNode())
 		return false;
 
+	qDebug(KIOFUSE_LOG) << "Dropping" << node->m_nodeName;
 	markNodeDeleted(node);
+
 	// This means that the parent dir is potentially no longer complete.
-	// The parent's m_lastChildrenRefresh is older than this node's m_lastStatRefresh
-	// already, except when the node failed to update with the last refresh. So better
-	// make sure.
+	// The parent's m_lastChildrenRefresh is older than this node's m_lastStatRefresh already,
+	// except when the node failed to update with the last refresh. So better make sure.
 	if(auto remoteParentDir = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(nodeForIno(node->m_parentIno)))
 		remoteParentDir->m_lastChildrenRefresh = {};
+
 	return true;
 }
 
