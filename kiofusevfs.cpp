@@ -1861,13 +1861,18 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 
 bool KIOFuseVFS::dropNodeIfEligible(std::shared_ptr<KIOFuseNode> &node)
 {
-	// Eligible nodes for dropping are nodes that have a zero lookup count and:
-	// 	If it is a KIOFuseRemoteCacheBasedFileNode it must be neither dirty or currently being flushed.
-	// 	If it is a KIOFuseRemoteDirNode all of its children must be eligible for dropping and
-	// 		it's parent must not be a Protcol or Origin node (@see mountUrl().
+	// Nodes are eligible for dropping if they have a zero lookup count, are in a remote dir and:
+	// 	If it is a KIOFuseRemoteCacheBasedFileNode it must be neither dirty nor being flushed.
+	// 	If it is a KIOFuseRemoteDirNode all of its children must be eligible for dropping.
 	auto canDropNode = [&]() -> bool {
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
 		if (!remoteNode || remoteNode->hasStatTimedOut() || node->m_lookupCount > 0)
+			return false;
+
+		// We don't want to delete an origin node, which requires checking the parent.
+		// Origin nodes have a parent that is either a Root or Protocol Node, not a RemoteDirNode.
+		auto parentNode = nodeForIno(node->m_parentIno);
+		if (!parentNode || parentNode->type() != KIOFuseNode::NodeType::RemoteDirNode)
 			return false;
 
 		if (auto cacheBasedNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
@@ -1875,12 +1880,6 @@ bool KIOFuseVFS::dropNodeIfEligible(std::shared_ptr<KIOFuseNode> &node)
 		else if (auto dir = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(node))
 		{
 			dropEligibleChildren(dir);
-			// We don't want to delete an origin node, which requires checking the parent.
-			// Origin nodes will have a parent that is either a Root or Protocol Node, not a RemoteDirNode.
-			// Hence we just check if the parent is a RemoteDirNode.
-			if (nodeForIno(dir->m_parentIno)->type() != KIOFuseNode::NodeType::RemoteDirNode)
-				return false;
-
 			return dir->m_childrenInos.empty() && !dir->m_childrenRequested;
 		}
 		else if(node->type() == KIOFuseNode::NodeType::RemoteSymlinkNode
