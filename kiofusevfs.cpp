@@ -1054,7 +1054,8 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 			}
 
 			remoteNode->m_cacheSize = std::max(remoteNode->m_cacheSize, off_t(offset + size));
-			remoteNode->m_stat.st_size = remoteNode->m_cacheSize;
+			// Don't set it to a lower value, in case the cache is incomplete
+			remoteNode->m_stat.st_size = std::max(remoteNode->m_stat.st_size, remoteNode->m_cacheSize);
 			// Update [cm] time as without writeback caching,
 			// the kernel doesn't do this for us.
 			clock_gettime(CLOCK_REALTIME, &remoteNode->m_stat.st_mtim);
