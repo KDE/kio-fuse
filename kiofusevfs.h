@@ -167,11 +167,6 @@ private:
 	/** Returns the corresponding FUSE error to the given KIO Job error */
 	static int kioErrorToFuseError(const int kioError);
 
-	/** Drops a node from the tree that has expired if it can be seamlessly mounted again later. */
-	bool dropNodeIfEligible(std::shared_ptr<KIOFuseNode> &dirNode);
-	/** Drops eligible children of a dirNode. */
-	void dropEligibleChildren(std::shared_ptr<KIOFuseRemoteDirNode> &dirNode);
-
 	/** Prevent the Application from quitting. */
 	std::unique_ptr<QEventLoopLocker> m_eventLoopLocker;
 

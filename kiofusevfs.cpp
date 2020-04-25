@@ -1288,11 +1288,15 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 
 	QString nodeName = QString::fromUtf8(name);
 
-	if(auto child = that->nodeByName(parentNode, nodeName); child && !that->dropNodeIfEligible(child))
-		return that->awaitAttrRefreshed(child, [=] (int error) {
-			Q_UNUSED(error); // Just send the old attr...
+	if(auto child = that->nodeByName(parentNode, nodeName)) // Part of the tree?
+	{
+		return that->awaitAttrRefreshed(child, [=](int error) {
+			Q_UNUSED(error);
+			// Lookup again, node might've been replaced or deleted
+			auto child = that->nodeByName(parentNode, nodeName);
 			that->replyEntry(req, child);
 		});
+	}
 
 	QUrl url = that->remoteUrl(parentNode);
 	if(url.isEmpty())
@@ -1490,6 +1494,14 @@ void KIOFuseVFS::decrementLookupCount(const std::shared_ptr<KIOFuseNode> node, u
 
 void KIOFuseVFS::markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node)
 {
+	if(auto dirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(node))
+	{
+		// Mark all children as deleted first (flatten the hierarchy)
+		for (auto childIno : std::vector<fuse_ino_t>(dirNode->m_childrenInos))
+			if(auto childNode = nodeForIno(childIno))
+				markNodeDeleted(childNode);
+	}
+
 	qDebug(KIOFUSE_LOG) << "Marking node" << node->m_nodeName << "as deleted";
 
 	reparentNode(node, KIOFuseIno::DeletedRoot);
@@ -1817,10 +1829,10 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 
 	if(!remoteNode->m_childrenRequested)
 	{
-		dropEligibleChildren(remoteNode);
-
 		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
 			return callback(0);
+
+		auto childrenNotSeen = std::make_shared<std::vector<fuse_ino_t>>(remoteNode->m_childrenInos);
 
 		// List the remote dir
 		auto refreshTime = std::chrono::steady_clock::now();
@@ -1844,6 +1856,11 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 				auto childrenNode = nodeByName(remoteNode, name);
 				if(childrenNode)
 				{
+					auto it = std::find(begin(*childrenNotSeen), end(*childrenNotSeen),
+					                    childrenNode->m_stat.st_ino);
+					if(it != end(*childrenNotSeen))
+						childrenNotSeen->erase(it);
+
 					// Try to update existing node
 					updateNodeFromUDSEntry(childrenNode, entry);
 					continue;
@@ -1863,12 +1880,21 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 			remoteNode->m_childrenRequested = false;
 
 			if(job->error())
-				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
-			else
 			{
-				remoteNode->m_lastChildrenRefresh = refreshTime;
-				emit remoteNode->gotChildren(0);
+				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
+				return;
 			}
+
+			for(auto ino : *childrenNotSeen)
+			{
+				auto childNode = nodeForIno(ino);
+				// Was not refreshed as part of this listDir operation, drop it
+				if(childNode && childNode->m_parentIno == node->m_stat.st_ino)
+					markNodeDeleted(childNode);
+			}
+
+			remoteNode->m_lastChildrenRefresh = refreshTime;
+			emit remoteNode->gotChildren(0);
 		});
 
 		remoteNode->m_childrenRequested = true;
@@ -1883,66 +1909,6 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		remoteNode->disconnect(*connection);
 	}
 	);
-}
-
-bool KIOFuseVFS::dropNodeIfEligible(std::shared_ptr<KIOFuseNode> &node)
-{
-	// Nodes are eligible for dropping if they have a zero lookup count, are in a remote dir and:
-	// 	If it is a KIOFuseRemoteCacheBasedFileNode it must be neither dirty nor being flushed.
-	// 	If it is a KIOFuseRemoteDirNode all of its children must be eligible for dropping.
-	auto canDropNode = [&]() -> bool {
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
-		if (!remoteNode || remoteNode->hasStatTimedOut() || node->m_lookupCount > 0)
-			return false;
-
-		// We don't want to delete an origin node, which requires checking the parent.
-		// Origin nodes have a parent that is either a Root or Protocol Node, not a RemoteDirNode.
-		auto parentNode = nodeForIno(node->m_parentIno);
-		if (!parentNode || parentNode->type() != KIOFuseNode::NodeType::RemoteDirNode)
-			return false;
-
-		if (auto cacheBasedNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
-			return !cacheBasedNode->m_cacheDirty && !cacheBasedNode->m_flushRunning;
-		else if (auto dir = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(node))
-		{
-			dropEligibleChildren(dir);
-			return dir->m_childrenInos.empty() && !dir->m_childrenRequested;
-		}
-		else if(node->type() == KIOFuseNode::NodeType::RemoteSymlinkNode
-		     || node->type() == KIOFuseNode::NodeType::RemoteFileJobBasedFileNode)
-			return true;
-		else // Shouldn't be able to reach here...
-		{
-			qWarning(KIOFUSE_LOG) << node->m_nodeName << "is apparently remote but actually isn't...";
-			return false;
-		}
-	};
-
-	if(!canDropNode())
-		return false;
-
-	qDebug(KIOFUSE_LOG) << "Dropping" << node->m_nodeName;
-	markNodeDeleted(node);
-
-	// This means that the parent dir is potentially no longer complete.
-	// The parent's m_lastChildrenRefresh is older than this node's m_lastStatRefresh already,
-	// except when the node failed to update with the last refresh. So better make sure.
-	if(auto remoteParentDir = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(nodeForIno(node->m_parentIno)))
-		remoteParentDir->m_lastChildrenRefresh = {};
-
-	return true;
-}
-
-void KIOFuseVFS::dropEligibleChildren(std::shared_ptr<KIOFuseRemoteDirNode> &dirNode)
-{
-	if(dirNode->m_childrenRequested)
-		return; // Don't drop just added nodes
-
-	for(const auto ino : std::vector<fuse_ino_t>(dirNode->m_childrenInos))
-	{
-		if(auto node = nodeForIno(ino))
-			dropNodeIfEligible(node);
-	}
 }
 
 void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KIOFuseNode> &, int)> callback)
@@ -2208,6 +2174,9 @@ void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, st
 		qDebug(KIOFUSE_LOG) << "Refreshing attributes of node" << node->m_nodeName;
 		remoteNode->m_statRequested = true;
 		mountUrl(remoteUrl(node), [=] (auto mountedNode, int error) {
+			if(error == ENOENT)
+				markNodeDeleted(node);
+
 			Q_UNUSED(mountedNode);
 			remoteNode->m_statRequested = false;
 			emit remoteNode->statRefreshed(error);
