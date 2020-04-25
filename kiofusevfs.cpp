@@ -88,6 +88,7 @@ struct KIOFuseVFS::FuseLLOps : public fuse_lowlevel_ops
 const struct KIOFuseVFS::FuseLLOps KIOFuseVFS::fuse_ll_ops;
 
 const std::chrono::steady_clock::duration KIOFuseRemoteNodeInfo::ATTR_TIMEOUT = std::chrono::seconds(30);
+std::chrono::steady_clock::time_point g_timeoutEpoch = {};
 
 /* Handles partial writes and EINTR.
  * Returns true only if count bytes were written successfully. */
@@ -1518,7 +1519,7 @@ void KIOFuseVFS::replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 	node->m_stat.st_blocks = (node->m_stat.st_size + node->m_stat.st_blksize - 1) / node->m_stat.st_blksize;
 
 	// TODO: Validity timeout?
-	fuse_reply_attr(req, &node->m_stat, 1);
+	fuse_reply_attr(req, &node->m_stat, 0);
 }
 
 void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
@@ -1531,8 +1532,8 @@ void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 		incrementLookupCount(node);
 
 		entry.ino = node->m_stat.st_ino;
-		entry.attr_timeout = 1.0;
-		entry.entry_timeout = 1.0;
+		entry.attr_timeout = 0.0;
+		entry.entry_timeout = 0.0;
 		entry.attr = node->m_stat;
 	}
 

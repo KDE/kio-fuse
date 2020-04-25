@@ -32,14 +32,11 @@
 #include <QtDBus/QDBusReply>
 #include <QDebug>
 #include "kiofuse_interface.h"
+#include "kiofuseprivate_interface.h"
 
 class FileOpsTest : public QObject
 {
 	Q_OBJECT
-public:
-	FileOpsTest() : m_kiofuse_iface(QStringLiteral("org.kde.KIOFuse"),
-	                 QStringLiteral("/org/kde/KIOFuse"),
-	                 QDBusConnection::sessionBus()) {}
 
 private Q_SLOTS:
 	void initTestCase();
@@ -56,14 +53,21 @@ private Q_SLOTS:
 	void testKioErrorMapping();
 	void testRootLookup();
 	void testFilenameEscaping();
+	void testDirRefresh();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
 
 private:
 	QDateTime roundDownToSecond(QDateTime dt);
+	bool forceNodeTimeout();
 
-	org::kde::KIOFuse::VFS m_kiofuse_iface;
+	org::kde::KIOFuse::VFS m_kiofuse_iface{QStringLiteral("org.kde.KIOFuse"),
+		                                   QStringLiteral("/org/kde/KIOFuse"),
+		                                   QDBusConnection::sessionBus()};
+	org::kde::KIOFuse::Private m_kiofuseprivate_iface{QStringLiteral("org.kde.KIOFuse"),
+		                                              QStringLiteral("/org/kde/KIOFuse"),
+		                                              QDBusConnection::sessionBus()};
 	QTemporaryDir m_mountDir;
 };
 
@@ -178,7 +182,6 @@ void FileOpsTest::testLocalFileOps()
 	QCOMPARE(mirroredFileInfo.lastRead(), roundDownToSecond(localFileInfo.lastRead()));
 
 	QVERIFY(mirroredFile.open(QIODevice::ReadWrite));
-
 	// Test touching the file
 	struct timespec times[2] = {{time_t(localFileInfo.lastModified().toSecsSinceEpoch()) + 42, 0},
 	                            {time_t(localFileInfo.lastRead().toSecsSinceEpoch()) + 1, 0}};
@@ -672,6 +675,54 @@ void FileOpsTest::testFilenameEscaping()
 	}
 }
 
+void FileOpsTest::testDirRefresh()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// readdir must not have any content yet
+	QCOMPARE(mirrorDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).count(), 0);
+
+	QFile newFile(localDir.filePath(QStringLiteral("newFile")));
+	QVERIFY(newFile.open(QFile::ReadWrite));
+
+	// Verify that the file is part of a dirlist after refresh
+	QCOMPARE(mirrorDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).count(), 0);
+	QVERIFY(forceNodeTimeout());
+	QCOMPARE(mirrorDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot),
+	         QStringList{QStringLiteral("newFile")});
+
+	// Delete the file
+	newFile.close();
+	QVERIFY(newFile.remove());
+
+	// Verify that it disappears from the dirlist after refresh
+	QCOMPARE(mirrorDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot), QStringList{QStringLiteral("newFile")});
+	QVERIFY(forceNodeTimeout());
+	QCOMPARE(mirrorDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).count(), 0);
+
+	// Recreate the file
+	QVERIFY(newFile.open(QFile::ReadWrite));
+
+	// Verify that access is immediately possible again (lookup is "optimistic")
+	QVERIFY(QFile::exists(mirrorDir.filePath(QStringLiteral("newFile"))));
+
+	// Delete the file again
+	newFile.close();
+	QVERIFY(newFile.remove());
+
+	// Verify that after a refresh it's dropped
+	QVERIFY(forceNodeTimeout());
+	QVERIFY(!QFile::exists(mirrorDir.filePath(QStringLiteral("newFile"))));
+}
+
 #ifdef WASTE_DISK_SPACE
 void FileOpsTest::testReadWrite4GBFile()
 {
@@ -713,6 +764,13 @@ void FileOpsTest::testReadWrite4GBFile()
 QDateTime FileOpsTest::roundDownToSecond(QDateTime dt)
 {
 	return QDateTime::fromTime_t(dt.toTime_t());
+}
+
+bool FileOpsTest::forceNodeTimeout()
+{
+	auto reply = m_kiofuseprivate_iface.forceNodeTimeout();
+	reply.waitForFinished();
+	return !reply.isError();
 }
 
 QTEST_GUILESS_MAIN(FileOpsTest)

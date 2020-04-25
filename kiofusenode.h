@@ -89,6 +89,10 @@ public:
 	NodeType type() const override { return Type; }
 };
 
+// Used for automated testing of expiration.
+// Set by KIOFuseServicePrivate::forceNodeTimeout.
+extern std::chrono::steady_clock::time_point g_timeoutEpoch;
+
 class KIOFuseRemoteNodeInfo : public QObject {
 	Q_OBJECT
 public:
@@ -102,7 +106,7 @@ public:
 	// Stores the last time a node's m_stat field was refreshed via KIO::stat or a parent's KIO::listDir.
 	std::chrono::steady_clock::time_point m_lastStatRefresh = std::chrono::steady_clock::now();
 	// Returns true if a node is due for a stat refresh, false otherwise.
-	bool hasStatTimedOut() { return (std::chrono::steady_clock::now() - m_lastStatRefresh) >= ATTR_TIMEOUT; }
+	bool hasStatTimedOut() { return m_lastStatRefresh < g_timeoutEpoch || (std::chrono::steady_clock::now() - m_lastStatRefresh) >= ATTR_TIMEOUT; }
 Q_SIGNALS:
 	// Emitted after finishing (successful or not) a attr refresh on this node
 	void statRefreshed(int error);
@@ -121,7 +125,7 @@ public:
 	// Stores the last time a node's children were refreshed via KIO::listDir.
 	std::chrono::steady_clock::time_point m_lastChildrenRefresh;
 	// Returns true if a node is due for a readdir refresh, false otherwise.
-	bool haveChildrenTimedOut() { return (std::chrono::steady_clock::now() - m_lastChildrenRefresh) >= ATTR_TIMEOUT; }
+	bool haveChildrenTimedOut() { return m_lastChildrenRefresh < g_timeoutEpoch || (std::chrono::steady_clock::now() - m_lastChildrenRefresh) >= ATTR_TIMEOUT; }
 
 Q_SIGNALS:
 	// Emitted after finishing (successful or not) a distlist on this node
