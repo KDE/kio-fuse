@@ -87,6 +87,8 @@ struct KIOFuseVFS::FuseLLOps : public fuse_lowlevel_ops
 
 const struct KIOFuseVFS::FuseLLOps KIOFuseVFS::fuse_ll_ops;
 
+const std::chrono::steady_clock::duration KIOFuseRemoteNodeInfo::ATTR_TIMEOUT = std::chrono::seconds(30);
+
 /* Handles partial writes and EINTR.
  * Returns true only if count bytes were written successfully. */
 static bool sane_write(int fd, const void *buf, size_t count)

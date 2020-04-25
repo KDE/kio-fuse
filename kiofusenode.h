@@ -93,7 +93,7 @@ class KIOFuseRemoteNodeInfo : public QObject {
 	Q_OBJECT
 public:
 	// Timeout for refreshing of attributes
-	const std::chrono::steady_clock::duration ATTR_TIMEOUT = std::chrono::seconds(30);
+	static const std::chrono::steady_clock::duration ATTR_TIMEOUT;
 	// Override the URL
 	QUrl m_overrideUrl;
 	// Whether a stat was requested. If true, the signal "statRefreshed" will
