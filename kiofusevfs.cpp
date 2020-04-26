@@ -968,6 +968,13 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
 	{
 		qDebug(KIOFUSE_LOG) << "Reading" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
+
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+		{
+			fuse_reply_err(req, ENOENT);
+			return;
+		}
+
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
 		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadOnly);
 		connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
@@ -1086,6 +1093,13 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
 	{
 		qDebug(KIOFUSE_LOG) << "Writing" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
+
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+		{
+			fuse_reply_err(req, ENOENT);
+			return;
+		}
+
 		QByteArray data(buf, size); // Copy data
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
 		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadWrite);
@@ -1697,6 +1711,9 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBas
 
 	if(!node->m_localCache)
 	{
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+			return callback(ENOENT);
+
 		// Create a temporary file
 		node->m_localCache = tmpfile();
 
@@ -1797,6 +1814,9 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 	if(!remoteNode->m_childrenRequested)
 	{
 		dropEligibleChildren(remoteNode);
+
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+			return callback(0);
 
 		// List the remote dir
 		auto refreshTime = std::chrono::steady_clock::now();
@@ -2175,6 +2195,9 @@ void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, st
 	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
 	if(!remoteNode || !remoteNode->hasStatTimedOut())
 		return callback(0); // Node not remote, or it hasn't timed out yet
+
+	if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+		return callback(0); // Node got deleted
 
 	if(!remoteNode->m_statRequested)
 	{
