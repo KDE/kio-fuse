@@ -1637,7 +1637,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	}
 }
 
-void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node, const KIO::UDSEntry &entry)
+std::shared_ptr<KIOFuseNode> KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node, const KIO::UDSEntry &entry)
 {
 	qDebug(KIOFUSE_LOG) << "Updating attributes of" << node->m_nodeName;
 
@@ -1648,20 +1648,21 @@ void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node
 	// new node into the node to be updated and so we update newNode as
 	// appropriate before merging.
 	auto newNode = createNodeFromUDSEntry(entry, node->m_parentIno, node->m_nodeName);
-	if (!newNode || newNode->type() != node->type()
-	       // Can't happen, but better make sure.
-	    || (node->m_stat.st_mode & S_IFMT) != (newNode->m_stat.st_mode & S_IFMT))
+	if (!newNode)
 	{
-		qWarning(KIOFUSE_LOG) << "Not possible to update" << node->m_nodeName;
-		return;
+		qWarning(KIOFUSE_LOG) << "Could not create new node for" << node->m_nodeName;
+		return node;
 	}
 
-	auto oldRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
-	auto newRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(newNode);
-	if (!oldRemoteNode || !newRemoteNode)
+	if (newNode->type() != node->type())
 	{
-		qWarning(KIOFUSE_LOG) << "Trying to update a local node" << node->m_nodeName;
-		return;
+		if(node->m_parentIno != KIOFuseIno::DeletedRoot)
+		{
+			markNodeDeleted(node);
+			insertNode(newNode);
+			return newNode;
+		}
+		return node;
 	}
 
 	const bool newMtimNewer = node->m_stat.st_mtim < newNode->m_stat.st_mtim;
@@ -1701,6 +1702,9 @@ void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node
 		oldSymlinkNode->m_target = newSymlinkNode->m_target;
 	}
 
+	auto oldRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
+	auto newRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(newNode);
+
 	oldRemoteNode->m_lastStatRefresh = std::chrono::steady_clock::now();
 
 	// oldRemoteNode->m_overrideUrl could've been set by mountUrl, don't clear it
@@ -1710,6 +1714,7 @@ void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node
 	// Preserve the inode number
 	newNode->m_stat.st_ino = node->m_stat.st_ino;
 	node->m_stat = newNode->m_stat;
+	return node;
 }
 
 void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, std::function<void(int error)> callback)
@@ -1838,10 +1843,15 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		auto refreshTime = std::chrono::steady_clock::now();
 		auto *job = KIO::listDir(remoteUrl(remoteNode));
 		connect(job, &KIO::ListJob::entries, [=](auto *job, const KIO::UDSEntryList &entries) {
-			Q_UNUSED(job);
-
 			for(auto &entry : entries)
 			{
+				// Inside the loop because refreshing "." might drop it
+				if(remoteNode->m_parentIno == KIOFuseIno::DeletedRoot)
+				{
+					job->kill(KJob::EmitResult);
+					return;
+				}
+
 				QString name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
 
 				// Refresh "." and ignore ".."
@@ -1879,7 +1889,7 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		connect(job, &KIO::ListJob::result, [=] {
 			remoteNode->m_childrenRequested = false;
 
-			if(job->error())
+			if(job->error() && job->error() != KJob::KilledJobError)
 			{
 				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
 				return;
@@ -2020,7 +2030,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 		auto finalNode = nodeByName(pathNode, pathElements.last());
 		if(finalNode)
 			// Note that node may fail to update, but this type of error is ignored.
-			updateNodeFromUDSEntry(finalNode, statJob->statResult());
+			finalNode = updateNodeFromUDSEntry(finalNode, statJob->statResult());
 		else
 		{
 			// The remote name (statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME)) has to be
