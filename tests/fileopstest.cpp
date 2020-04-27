@@ -54,6 +54,7 @@ private Q_SLOTS:
 	void testRootLookup();
 	void testFilenameEscaping();
 	void testDirRefresh();
+	void testFileRefresh();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -721,6 +722,42 @@ void FileOpsTest::testDirRefresh()
 	// Verify that after a refresh it's dropped
 	QVERIFY(forceNodeTimeout());
 	QVERIFY(!QFile::exists(mirrorDir.filePath(QStringLiteral("newFile"))));
+}
+
+void FileOpsTest::testFileRefresh()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// readdir must not have any content yet
+	QCOMPARE(mirrorDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).count(), 0);
+
+	QFile localFile(localDir.filePath(QStringLiteral("newFile")));
+	QVERIFY(localFile.open(QFile::ReadWrite));
+
+	QFile mirrorFile(mirrorDir.filePath(QStringLiteral("newFile")));
+	QVERIFY(mirrorFile.open(QFile::ReadOnly));
+	QCOMPARE(mirrorFile.size(), 0); // File is empty
+	QCOMPARE(mirrorFile.readAll(), QByteArray{});
+	QVERIFY(mirrorFile.permissions() & QFile::ReadOther); // Has default perms
+
+	QCOMPARE(localFile.write("teststring", 10), 10); // Write some data
+	QVERIFY(localFile.flush());
+	QVERIFY(localFile.setPermissions(localFile.permissions() & ~QFile::ReadOther)); // Change perms
+	QCOMPARE(mirrorFile.size(), 0); // File is still empty
+	QVERIFY(forceNodeTimeout());
+
+	// Without reopening, it has the new content and perms now
+	QCOMPARE(mirrorFile.size(), 10);
+	QCOMPARE(mirrorFile.readAll(), QStringLiteral("teststring").toUtf8());
+	QCOMPARE(mirrorFile.permissions() & QFile::ReadOther, 0); // Has changed perms
 }
 
 #ifdef WASTE_DISK_SPACE
