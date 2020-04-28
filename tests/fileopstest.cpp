@@ -55,6 +55,8 @@ private Q_SLOTS:
 	void testFilenameEscaping();
 	void testDirRefresh();
 	void testFileRefresh();
+	void testSymlinkRefresh();
+	void testTypeRefresh();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -758,6 +760,68 @@ void FileOpsTest::testFileRefresh()
 	QCOMPARE(mirrorFile.size(), 10);
 	QCOMPARE(mirrorFile.readAll(), QStringLiteral("teststring").toUtf8());
 	QCOMPARE(mirrorFile.permissions() & QFile::ReadOther, 0); // Has changed perms
+}
+
+void FileOpsTest::testSymlinkRefresh()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// Create a symlink
+	QCOMPARE(symlink("/oldtarget", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
+	QCOMPARE(QFile::symLinkTarget(mirrorDir.filePath(QStringLiteral("symlink"))), QStringLiteral("/oldtarget"));
+
+	// Change the symlink
+	QVERIFY(QFile::remove(localDir.filePath((QStringLiteral("symlink")))));
+	QCOMPARE(symlink("/newtarget", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
+
+	QVERIFY(forceNodeTimeout());
+
+	QCOMPARE(QFile::symLinkTarget(mirrorDir.filePath(QStringLiteral("symlink"))), QStringLiteral("/newtarget"));
+}
+
+void FileOpsTest::testTypeRefresh()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// Create a file and directory
+	QFile localFile(localDir.filePath(QStringLiteral("changingtodir")));
+	QVERIFY(localFile.open(QFile::ReadWrite));
+	QVERIFY(QDir(localDir.path()).mkdir(QStringLiteral("changingtofile")));
+
+	// Open it on the mirror
+	QFile changingMirrorFile(mirrorDir.filePath(QStringLiteral("changingtodir")));
+	QVERIFY(changingMirrorFile.open(QFile::ReadOnly));
+
+	// Replace the file locally  with a directory
+	QVERIFY(localFile.remove());
+	QVERIFY(QDir(localDir.path()).mkdir(QStringLiteral("changingtodir")));
+
+	QVERIFY(forceNodeTimeout());
+
+	// Verify that it's a directory now
+	struct stat st;
+	QCOMPARE(stat(qPrintable(changingMirrorFile.fileName()), &st), 0);
+	QCOMPARE(st.st_mode & S_IFMT, S_IFDIR);
+
+	// The opened file still refers to the (now deleted) file
+	QCOMPARE(fstat(changingMirrorFile.handle(), &st), 0);
+	QCOMPARE(st.st_mode & S_IFMT, S_IFREG);
 }
 
 #ifdef WASTE_DISK_SPACE
