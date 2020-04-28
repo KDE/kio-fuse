@@ -548,13 +548,17 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 		return;
 	}
 
-	if(node->type() != KIOFuseNode::NodeType::RemoteSymlinkNode)
+	auto symlinkNode = std::dynamic_pointer_cast<KIOFuseSymLinkNode>(node);
+	if(!symlinkNode)
 	{
 		fuse_reply_err(req, EINVAL);
 		return;
 	}
 
-	fuse_reply_readlink(req, std::dynamic_pointer_cast<KIOFuseSymLinkNode>(node)->m_target.toUtf8().data());
+	that->awaitAttrRefreshed(node, [=](int error) {
+		Q_UNUSED(error); // Just send the old target...
+		fuse_reply_readlink(req, symlinkNode->m_target.toUtf8().data());
+	});
 }
 
 void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev)
