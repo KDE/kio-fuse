@@ -1338,7 +1338,8 @@ fuse_ino_t KIOFuseVFS::insertNode(const std::shared_ptr<KIOFuseNode> &node, fuse
 	if(ino == KIOFuseIno::Invalid)
 	{
 		// Allocate a free inode number
-		while(ino == KIOFuseIno::Invalid || m_nodes.find(ino) != m_nodes.end())
+		ino = m_nextIno;
+		while(ino < KIOFuseIno::DynamicStart || m_nodes.find(ino) != m_nodes.end())
 			ino++;
 
 		m_nextIno = ino + 1;
@@ -1512,6 +1513,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	fillStatForFile(attr);
 	attr.st_size = entry.numberValue(KIO::UDSEntry::UDS_SIZE, 1);
 	attr.st_mode = entry.numberValue(KIO::UDSEntry::UDS_ACCESS, entry.isDir() ? 0755 : 0644);
+	attr.st_mode &= ~S_IFMT; // Set by us further down
 	if(entry.contains(KIO::UDSEntry::UDS_MODIFICATION_TIME))
 	{
 		attr.st_mtim.tv_sec = entry.numberValue(KIO::UDSEntry::UDS_MODIFICATION_TIME);
@@ -1531,15 +1533,13 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	if(entry.contains(KIO::UDSEntry::UDS_USER))
 	{
 		QString user = entry.stringValue(KIO::UDSEntry::UDS_USER);
-		auto *pw = getpwnam(user.toUtf8().data());
-		if(pw)
+		if(auto *pw = getpwnam(user.toUtf8().data()))
 			attr.st_uid = pw->pw_uid;
 	}
 	if(entry.contains(KIO::UDSEntry::UDS_GROUP))
 	{
 		QString group = entry.stringValue(KIO::UDSEntry::UDS_GROUP);
-		auto *gr = getgrnam(group.toUtf8().data());
-		if(gr)
+		if(auto *gr = getgrnam(group.toUtf8().data()))
 			attr.st_gid = gr->gr_gid;
 	}
 
@@ -1772,7 +1772,10 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 
 void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KIOFuseNode> &, int)> callback)
 {
-	qDebug(KIOFUSE_LOG) << "Mounting url" << url;
+	QUrl urlWithoutPassword = url;
+	urlWithoutPassword.setPassword({});
+
+	qDebug(KIOFUSE_LOG) << "Mounting" << urlWithoutPassword;
 	auto statJob = KIO::stat(url);
 	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
 	                                            // files over plain HTTP
@@ -1810,9 +1813,6 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 				insertNode(protocolNode);
 			}
 
-			QUrl urlWithoutPassword = url;
-			urlWithoutPassword.setPassword({});
-
 			originNodeName = urlWithoutPassword.authority();
 		}
 		else
@@ -1835,11 +1835,10 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 			originNode = newOriginNode;
 			insertNode(originNode);
 		}
-		else if(originNode->type() != KIOFuseNode::NodeType::RemoteDirNode)
-			    return callback(nullptr, EIO);
-		else // Allow the user to change the password
-			std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(originNode)->m_overrideUrl = makeOriginUrl(url);
-		
+		else if(auto remoteDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(originNode))
+			remoteDirNode->m_overrideUrl = makeOriginUrl(url); // Allow the user to change the password
+		else
+			return callback(nullptr, EIO);
 
 		// Create all path components as directories
 		auto pathNode = originNode;
@@ -2081,9 +2080,9 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case 0                                     : return 0; // No error
 		case KIO::ERR_CANNOT_OPEN_FOR_READING      : return EIO;
 		case KIO::ERR_CANNOT_OPEN_FOR_WRITING      : return EIO;
-		case KIO::ERR_CANNOT_LAUNCH_PROCESS        : return EPERM;
-		case KIO::ERR_INTERNAL                     : return EPROTO;
-		case KIO::ERR_MALFORMED_URL                : return EBADF;
+		case KIO::ERR_CANNOT_LAUNCH_PROCESS        : return EIO;
+		case KIO::ERR_INTERNAL                     : return EIO;
+		case KIO::ERR_MALFORMED_URL                : return EIO;
 		case KIO::ERR_UNSUPPORTED_PROTOCOL         : return ENOPROTOOPT;
 		case KIO::ERR_NO_SOURCE_PROTOCOL           : return ENOPROTOOPT;
 		case KIO::ERR_UNSUPPORTED_ACTION           : return ENOTTY;
@@ -2100,7 +2099,7 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_CYCLIC_LINK                  : return ELOOP;
 		case KIO::ERR_USER_CANCELED                : return ECANCELED;
 		case KIO::ERR_CYCLIC_COPY                  : return ELOOP;
-		case KIO::ERR_COULD_NOT_CREATE_SOCKET      : return ENOTCONN;
+		case KIO::ERR_CANNOT_CREATE_SOCKET         : return ENOTCONN;
 		case KIO::ERR_CANNOT_CONNECT               : return ENOTCONN;
 		case KIO::ERR_CONNECTION_BROKEN            : return ENOTCONN;
 		case KIO::ERR_NOT_FILTER_PROTOCOL          : return EPROTOTYPE;
@@ -2136,12 +2135,12 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_NEED_PASSWD                  : return EACCES;
 		case KIO::ERR_CANNOT_SYMLINK               : return EIO;
 		case KIO::ERR_NO_CONTENT                   : return ENODATA;
-		case KIO::ERR_DISK_FULL                    : return ENOMEM;
+		case KIO::ERR_DISK_FULL                    : return ENOSPC;
 		case KIO::ERR_IDENTICAL_FILES              : return EEXIST;
-		case KIO::ERR_SLAVE_DEFINED                : return EALREADY;
+		case KIO::ERR_SLAVE_DEFINED                : return EIO;
 		case KIO::ERR_UPGRADE_REQUIRED             : return EPROTOTYPE;
 		case KIO::ERR_POST_DENIED                  : return EACCES;
-		case KIO::ERR_COULD_NOT_SEEK               : return EIO;
+		case KIO::ERR_CANNOT_SEEK                  : return EIO;
 		case KIO::ERR_CANNOT_SETTIME               : return EIO;
 		case KIO::ERR_CANNOT_CHOWN                 : return EIO;
 		case KIO::ERR_POST_NO_SIZE                 : return EIO;
