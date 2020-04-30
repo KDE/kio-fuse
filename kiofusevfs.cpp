@@ -2180,14 +2180,19 @@ void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, st
 	if(!remoteNode || !remoteNode->hasStatTimedOut())
 		return callback(0); // Node not remote, or it hasn't timed out yet
 
-	if(node->m_parentIno == KIOFuseIno::DeletedRoot)
-		return callback(0); // Node got deleted
+	// To do the same request as the initial mount or lookup, build the URL from the parent
+	auto parentNode = nodeForIno(node->m_parentIno);
+	auto remoteParentNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(parentNode);
+	QUrl url;
+	if(!remoteParentNode || (url = remoteUrl(parentNode)).isEmpty())
+		return callback(0); // Parent not remote
 
 	if(!remoteNode->m_statRequested)
 	{
 		qDebug(KIOFUSE_LOG) << "Refreshing attributes of node" << node->m_nodeName;
+		url.setPath(url.path() + QLatin1Char('/') + node->m_nodeName);
 		remoteNode->m_statRequested = true;
-		mountUrl(remoteUrl(node), [=] (auto mountedNode, int error) {
+		mountUrl(url, [=] (auto mountedNode, int error) {
 			if(error == ENOENT)
 				markNodeDeleted(node);
 
