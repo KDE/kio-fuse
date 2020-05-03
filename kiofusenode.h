@@ -24,6 +24,7 @@
 
 #include <functional>
 #include <vector>
+#include <chrono>
 
 #include <QObject>
 #include <QUrl>
@@ -91,8 +92,20 @@ public:
 class KIOFuseRemoteNodeInfo : public QObject {
 	Q_OBJECT
 public:
+	// Timeout for refreshing of attributes
+	const std::chrono::steady_clock::duration ATTR_TIMEOUT = std::chrono::seconds(30);
 	// Override the URL
 	QUrl m_overrideUrl;
+	// Whether a stat was requested. If true, the signal "statRefreshed" will
+	// be emitted on finish.
+	bool m_statRequested = false;
+	// Stores the last time a node's m_stat field was refreshed via KIO::stat or a parent's KIO::listDir.
+	std::chrono::steady_clock::time_point m_lastStatRefresh = std::chrono::steady_clock::now();
+	// Returns true if a node is due for a stat refresh, false otherwise.
+	bool hasStatTimedOut() { return (std::chrono::steady_clock::now() - m_lastStatRefresh) >= ATTR_TIMEOUT; }
+Q_SIGNALS:
+	// Emitted after finishing (successful or not) a attr refresh on this node
+	void statRefreshed(int error);
 };
 
 class KIOFuseRemoteDirNode : public KIOFuseRemoteNodeInfo, public KIOFuseDirNode {
@@ -102,11 +115,13 @@ public:
 	static const NodeType Type = NodeType::RemoteDirNode;
 	NodeType type() const override { return Type; }
 
-	// Whether the list of children is the result of a successful dirlist
-	bool m_childrenComplete = false;
 	// Whether a dirlist was requested. If true, the signal "gotChildren" will
 	// be emitted on finish.
 	bool m_childrenRequested = false;
+	// Stores the last time a node's children were refreshed via KIO::listDir.
+	std::chrono::steady_clock::time_point m_lastChildrenRefresh;
+	// Returns true if a node is due for a readdir refresh, false otherwise.
+	bool haveChildrenTimedOut() { return (std::chrono::steady_clock::now() - m_lastChildrenRefresh) >= ATTR_TIMEOUT; }
 
 Q_SIGNALS:
 	// Emitted after finishing (successful or not) a distlist on this node

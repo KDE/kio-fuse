@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <signal.h>
+#include <chrono>
 
 #ifdef Q_OS_LINUX
 #include <linux/fs.h>
@@ -291,7 +292,10 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		return;
 	}
 
-	that->replyAttr(req, node);
+	return that->awaitAttrRefreshed(node, [=] (int error) {
+		Q_UNUSED(error); // Just send the old attr...
+		replyAttr(req, node);
+	});
 }
 
 void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, fuse_file_info *fi)
@@ -1261,8 +1265,11 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 
 	QString nodeName = QString::fromUtf8(name);
 
-	if(auto child = that->nodeByName(parentNode, nodeName))
-		return that->replyEntry(req, child);
+	if(auto child = that->nodeByName(parentNode, nodeName); child && !that->dropNodeIfEligible(child))
+		return that->awaitAttrRefreshed(child, [=] (int error) {
+			Q_UNUSED(error); // Just send the old attr...
+			that->replyEntry(req, child);
+		});
 
 	QUrl url = that->remoteUrl(parentNode);
 	if(url.isEmpty())
@@ -1600,6 +1607,79 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	}
 }
 
+void KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node, const KIO::UDSEntry &entry)
+{
+	// Updating a node works by creating a new node and merging their attributes
+	// (both m_stat and certain other class attributes) together.
+	// This is broadly done with node->m_stat = newNode->m_stat;
+	// However, there are some things we may not want to copy straight from the
+	// new node into the node to be updated and so we update newNode as
+	// appropriate before merging.
+	auto newNode = createNodeFromUDSEntry(entry, node->m_parentIno, node->m_nodeName);
+	if (!newNode || newNode->type() != node->type())
+	{
+		qWarning(KIOFUSE_LOG) << "Not possible to update" << node->m_nodeName;
+		return;
+	}
+
+	auto oldRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
+	auto newRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(newNode);
+	if (!oldRemoteNode || !newRemoteNode)
+	{
+		qWarning(KIOFUSE_LOG) << "Trying to update a local node" << node->m_nodeName;
+		return;
+	}
+
+	// Only change if time is newer than we have
+	if (newNode->m_stat.st_mtim.tv_sec < node->m_stat.st_mtim.tv_sec)
+	{
+		newNode->m_stat.st_mtim.tv_sec = node->m_stat.st_mtim.tv_sec;
+		newNode->m_stat.st_mtim.tv_nsec = node->m_stat.st_mtim.tv_nsec;
+	}
+	if (newNode->m_stat.st_atim.tv_sec < node->m_stat.st_atim.tv_sec)
+	{
+		newNode->m_stat.st_atim.tv_sec = node->m_stat.st_atim.tv_sec;
+		newNode->m_stat.st_atim.tv_nsec = node->m_stat.st_atim.tv_nsec;
+	}
+
+	if (auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
+	{
+		if(cacheBasedFileNode->m_stat.st_size != newNode->m_stat.st_size)
+		{
+			// Someone has changed something server side, lets get those changes.
+			if(cacheBasedFileNode->m_cacheDirty || cacheBasedFileNode->m_flushRunning)
+			{
+				// This is undefined territory at this point...
+				// Two people have changed the file at the same time, we can't resolve this...
+				qWarning(KIOFUSE_LOG) << cacheBasedFileNode->m_nodeName << "cache is dirty but file has also been changed by something else";
+				newNode->m_stat.st_size = cacheBasedFileNode->m_stat.st_size;
+			}
+			else if(cacheBasedFileNode->m_localCache && cacheBasedFileNode->cacheIsComplete())
+			{
+				// Our cache isn't dirty but the file has changed, our current cache is invalid
+				// and we can safely get rid of it.
+				fclose(cacheBasedFileNode->m_localCache);
+				cacheBasedFileNode->m_cacheSize = 0;
+				cacheBasedFileNode->m_cacheComplete = false;
+				cacheBasedFileNode->m_localCache = nullptr;
+			}
+		}
+	}
+	else if (auto oldSymlinkNode = std::dynamic_pointer_cast<KIOFuseSymLinkNode>(node))
+	{
+		auto newSymlinkNode = std::dynamic_pointer_cast<KIOFuseSymLinkNode>(newNode);
+		oldSymlinkNode->m_target = newSymlinkNode->m_target;
+	}
+
+	oldRemoteNode->m_lastStatRefresh = std::chrono::steady_clock::now();
+	// TODO: Can this be done safely? Maybe check oldRemoteNode->m_overrideUrl.isEmpty().
+	oldRemoteNode->m_overrideUrl = newRemoteNode->m_overrideUrl;
+
+	// Preserve the inode number
+	newNode->m_stat.st_ino = node->m_stat.st_ino;
+	node->m_stat = newNode->m_stat;
+}
+
 void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, std::function<void(int error)> callback)
 {
 	if(bytes < 0)
@@ -1709,12 +1789,15 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 	if(!remoteNode)
 		return callback(0); // Not a remote node
 
-	if(remoteNode->m_childrenComplete)
-		return callback(0);
+	if(!remoteNode->haveChildrenTimedOut())
+		return callback(0); // Children complete and up to date
 
 	if(!remoteNode->m_childrenRequested)
 	{
+		dropEligibleChildren(remoteNode);
+
 		// List the remote dir
+		auto refreshTime = std::chrono::steady_clock::now();
 		auto *job = KIO::listDir(remoteUrl(remoteNode));
 		connect(job, &KIO::ListJob::entries, [=](auto *job, const KIO::UDSEntryList &entries) {
 			Q_UNUSED(job);
@@ -1723,18 +1806,24 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 			{
 				QString name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
 
-				// Ignore "." and ".."
-				if(name == QStringLiteral(".") || name == QStringLiteral(".."))
+				// Refresh "." and ignore ".."
+				if(name == QStringLiteral("."))
+				{
+					updateNodeFromUDSEntry(remoteNode, entry);
+					continue;
+				}
+				else if(name == QStringLiteral(".."))
 				   continue;
 
 				auto childrenNode = nodeByName(remoteNode, name);
 				if(childrenNode)
-					// TODO: Verify that the type matches.
-					// It's possible that something was mounted as a directory,
-					// but it's actually a symlink :-/
+				{
+					// Try to update existing node
+					updateNodeFromUDSEntry(childrenNode, entry);
 					continue;
+				}
 
-				childrenNode = createNodeFromUDSEntry(entry, remoteNode->m_stat.st_ino);
+				childrenNode = createNodeFromUDSEntry(entry, remoteNode->m_stat.st_ino, name);
 				if(!childrenNode)
 				{
 					qWarning(KIOFUSE_LOG) << "Could not create node for" << name;
@@ -1751,7 +1840,7 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
 			else
 			{
-				remoteNode->m_childrenComplete = true;
+				remoteNode->m_lastChildrenRefresh = refreshTime;
 				emit remoteNode->gotChildren(0);
 			}
 		});
@@ -1768,6 +1857,65 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		remoteNode->disconnect(*connection);
 	}
 	);
+}
+
+bool KIOFuseVFS::dropNodeIfEligible(std::shared_ptr<KIOFuseNode> &node)
+{
+	// Eligible nodes for dropping are nodes that have a zero lookup count and:
+	// 	If it is a KIOFuseRemoteCacheBasedFileNode it must be neither dirty or currently being flushed.
+	// 	If it is a KIOFuseRemoteDirNode all of its children must be eligible for dropping and
+	// 		it's parent must not be a Protcol or Origin node (@see mountUrl().
+	auto canDropNode = [&]() -> bool {
+		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
+		if (!remoteNode || remoteNode->hasStatTimedOut() || node->m_lookupCount > 0)
+			return false;
+
+		if (auto cacheBasedNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
+			return !cacheBasedNode->m_cacheDirty && !cacheBasedNode->m_flushRunning;
+		else if (auto dir = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(node))
+		{
+			dropEligibleChildren(dir);
+			// We don't want to delete an origin node, which requires checking the parent.
+			// Origin nodes will have a parent that is either a Root or Protocol Node, not a RemoteDirNode.
+			// Hence we just check if the parent is a RemoteDirNode.
+			if (nodeForIno(dir->m_parentIno)->type() != KIOFuseNode::NodeType::RemoteDirNode)
+				return false;
+
+			return dir->m_childrenInos.empty() && !dir->m_childrenRequested;
+		}
+		else if(node->type() == KIOFuseNode::NodeType::RemoteSymlinkNode
+		     || node->type() == KIOFuseNode::NodeType::RemoteFileJobBasedFileNode)
+			return true;
+		else // Shouldn't be able to reach here...
+		{
+			qWarning(KIOFUSE_LOG) << node->m_nodeName << "is apparently remote but actually isn't...";
+			return false;
+		}
+	};
+
+	if(!canDropNode())
+		return false;
+
+	markNodeDeleted(node);
+	// This means that the parent dir is potentially no longer complete.
+	// The parent's m_lastChildrenRefresh is older than this node's m_lastStatRefresh
+	// already, except when the node failed to update with the last refresh. So better
+	// make sure.
+	if(auto remoteParentDir = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(nodeForIno(node->m_parentIno)))
+		remoteParentDir->m_lastChildrenRefresh = {};
+	return true;
+}
+
+void KIOFuseVFS::dropEligibleChildren(std::shared_ptr<KIOFuseRemoteDirNode> &dirNode)
+{
+	if(dirNode->m_childrenRequested)
+		return; // Don't drop just added nodes
+
+	for(const auto ino : std::vector<fuse_ino_t>(dirNode->m_childrenInos))
+	{
+		if(auto node = nodeForIno(ino))
+			dropNodeIfEligible(node);
+	}
 }
 
 void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KIOFuseNode> &, int)> callback)
@@ -1877,7 +2025,10 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 
 		// Finally create the last component
 		auto finalNode = nodeByName(pathNode, pathElements.last());
-		if(!finalNode)
+		if(finalNode)
+			// Note that node may fail to update, but this type of error is ignored.
+			updateNodeFromUDSEntry(finalNode, statJob->statResult());
+		else
 		{
 			// The remote name (statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME)) has to be
 			// ignored as it can be different from the path. e.g. tar:/foo.tar/ is "/"
@@ -2016,7 +2167,35 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedF
 	);
 }
 
-bool KIOFuseVFS::setupSignalHandlers() 
+void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, std::function<void (int)> callback)
+{
+	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
+	if(!remoteNode || !remoteNode->hasStatTimedOut())
+		return callback(0); // Node not remote, or it hasn't timed out yet
+
+	if(!remoteNode->m_statRequested)
+	{
+		qDebug(KIOFUSE_LOG) << "Refreshing attributes of node" << node->m_nodeName;
+		remoteNode->m_statRequested = true;
+		mountUrl(remoteUrl(node), [=] (auto mountedNode, int error) {
+			Q_UNUSED(mountedNode);
+			remoteNode->m_statRequested = false;
+			emit remoteNode->statRefreshed(error);
+		});
+	}
+
+	// Using a unique_ptr here to let the lambda disconnect the connection itself
+	auto connection = std::make_unique<QMetaObject::Connection>();
+	auto &conn = *connection;
+	conn = connect(remoteNode.get(), &KIOFuseRemoteNodeInfo::statRefreshed,
+				   [=, connection = std::move(connection)](int error) {
+		callback(error);
+		remoteNode->disconnect(*connection);
+	}
+	);
+}
+
+bool KIOFuseVFS::setupSignalHandlers()
 {
 	// Create required socketpair for custom signal handling
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, signalFd)) {

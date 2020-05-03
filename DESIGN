@@ -162,7 +162,13 @@ inserting it into the tree. This happens when mounting a URL (uses KIO::stat)
 and when requesting the children of a URL (using KIO::listDir with details).
 The same is true of a symlink's target.
 
-As a result, getattr and readlink are non-blocking.
+As a result, getattr and readlink are non-blocking if and only if the node's
+attributes have not timed out.  A node's attributes are considered valid for 30
+seconds. The last time a node was refreshed by a KIO::stat or KIO:: listDir is
+stored in m_lastStatRefresh.  Operations that send back a node's attributes
+checks if they have timed out, via the hasStatTimedOut() method and updates them
+as appropriate.
+
 setattr instead does block, it only returns if all of the requested operations
 (e.g. SET_ATTR_MTIME, SET_ATTR_MODE, SET_ATTR_UID) completed.
 
@@ -174,8 +180,11 @@ API offers, children of KIOFuseRemoteDirNode are loaded lazily. This means
 that the full list of children is only requested (using KIO::listDir) if
 required, so if lookup on the directory fails or if readdir is executed.
 
-This is implemented using bool m_childrenComplete and the
-awaitChildrenComplete method in KIOFuseVFS.
+A node's children are considered valid for 30 seconds. The last time a node
+was dir listed via KIO::listDir is stored in m_lastChildrenRefreshed.
+Each readdir request checks if they have timed out via the
+haveChildrenTimedOut() method and updates the children (and consequently, their
+attributes) as appropriate.
 
 File IO
 -------
@@ -218,3 +227,16 @@ simply not considered during kio-fuse development either.
 
 While inode and device numbers can be returned are part of UDSEntries returned
 from slaves, neither stat.st_link nor ::link are accessible.
+
+Node Dropping
+---------
+
+Each remote node has a timeout on its attributes and it's children, which is
+currently set to 30 seconds. Before a KIO::stat is called to refresh a node's
+attributes or KIO::listDir is called to refresh a directory's children, an
+attempt is made to remove expired nodes via the dropNodeIfEligible() and
+dropChildrenIfEligible() methods respectively. Eligibility for removal is
+dependent on the node type and is described in the mentioned methods above, but
+a common condition between all nodes is that at the very least, it's lookup
+count must be 0. Whether the node or any of it's children are deleted or not,
+an attempt is made to recreate it via KIO::stat/KIO::listDir.
