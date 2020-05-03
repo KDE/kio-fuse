@@ -1466,7 +1466,7 @@ void KIOFuseVFS::decrementLookupCount(const std::shared_ptr<KIOFuseNode> node, u
 }
 
 void KIOFuseVFS::markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node)
-{	
+{
 	reparentNode(node, KIOFuseIno::DeletedRoot);
 	decrementLookupCount(node, 0); // Trigger reevaluation
 }

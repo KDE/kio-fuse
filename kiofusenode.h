@@ -88,15 +88,19 @@ public:
 	NodeType type() const override { return Type; }
 };
 
-class KIOFuseRemoteDirNode : public QObject, public KIOFuseDirNode {
+class KIOFuseRemoteNodeInfo : public QObject {
+	Q_OBJECT
+public:
+	// Override the URL
+	QUrl m_overrideUrl;
+};
+
+class KIOFuseRemoteDirNode : public KIOFuseRemoteNodeInfo, public KIOFuseDirNode {
 	Q_OBJECT
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
 	static const NodeType Type = NodeType::RemoteDirNode;
 	NodeType type() const override { return Type; }
-
-	// Override the URL
-	QUrl m_overrideUrl;
 
 	// Whether the list of children is the result of a successful dirlist
 	bool m_childrenComplete = false;
@@ -109,14 +113,13 @@ Q_SIGNALS:
 	void gotChildren(int error);
 };
 
-class KIOFuseRemoteFileNode : public KIOFuseNode {
+class KIOFuseRemoteFileNode : public KIOFuseRemoteNodeInfo, public KIOFuseNode {
+	Q_OBJECT
 public:
 	using KIOFuseNode::KIOFuseNode;
-	// Override the URL (used for UDS_URL)
-	QUrl m_overrideUrl;
 };
 
-class KIOFuseRemoteCacheBasedFileNode : public QObject, public KIOFuseRemoteFileNode {
+class KIOFuseRemoteCacheBasedFileNode : public KIOFuseRemoteFileNode {
 	Q_OBJECT
 public:
 	using KIOFuseRemoteFileNode::KIOFuseRemoteFileNode;
@@ -134,7 +137,6 @@ public:
 	     m_cacheDirty = false, // Set on every write to m_localCache, cleared when a flush starts
 	     m_flushRunning = false; // If a flush is currently running
 	int m_numKilledJobs = 0; // reset on successful flush, incremented every time job is killed because cache is dirty (among other factors)
-
 Q_SIGNALS:
 	// Emitted when a download operation on this node made progress, finished or failed.
 	void localCacheChanged(int error);
@@ -143,7 +145,7 @@ Q_SIGNALS:
 };
 
 
-class KIOFuseRemoteFileJobBasedFileNode : public QObject, public KIOFuseRemoteFileNode {
+class KIOFuseRemoteFileJobBasedFileNode : public KIOFuseRemoteFileNode {
 	Q_OBJECT
 public:
 	using KIOFuseRemoteFileNode::KIOFuseRemoteFileNode;
@@ -151,8 +153,7 @@ public:
 	NodeType type() const override { return Type; }
 };
 
-class KIOFuseSymLinkNode : public QObject, public KIOFuseNode {
-	Q_OBJECT
+class KIOFuseSymLinkNode : public KIOFuseRemoteNodeInfo, public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
 	static const NodeType Type = NodeType::RemoteSymlinkNode;
