@@ -882,7 +882,9 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		std::vector<char> dirbuf;
 		appendDirentry(dirbuf, req, ".", &node->m_stat);
 
-		auto parentNode = that->nodeForIno(node->m_parentIno);
+		std::shared_ptr<KIOFuseNode> parentNode;
+		if(node->m_parentIno != KIOFuseIno::DeletedRoot)
+			parentNode = that->nodeForIno(node->m_parentIno);
 		if(!parentNode)
 			parentNode = that->nodeForIno(KIOFuseIno::Root);
 		if(parentNode)
