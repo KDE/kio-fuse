@@ -106,10 +106,17 @@ instantiated as one of its subclasses (KIOFuseRemoteCacheBasedNode or
 KIOFuseRemoteFileJobBasedNode). The type of class instantiated will depend on
 the URL of the file. Please see the "File I/O" section to learn more.
 
-Both kinds of remote nodes (KIOFuseRemoteDirNode, KIOFuseRemoteFileNode) have
-an m_overrideUrl member which is used to implement URL mountpoints and
-redirections. To get the remote URL of a node, the tree is traversed upwards
-until an override is found and the path is appended.
+Remote nodes (KIOFuseRemote*Node) are derived from KIOFuseRemoteFileInfo in
+addition to the base node type, which contains some members specific for remote
+access.
+
+m_overrideUrl is used to implement URL mountpoints and redirections. To get the
+remote URL of a node, the tree is traversed upwards until an override is found
+and the path is appended.
+
+m_lastStatRefresh stores the time when m_stat was updated last. It's updated
+on node construction and by updateNodeFromUDSEntry and queried by the
+awaitAttrRefreshed method.
 
 Unlinking a node
 ----------------
@@ -162,12 +169,8 @@ inserting it into the tree. This happens when mounting a URL (uses KIO::stat)
 and when requesting the children of a URL (using KIO::listDir with details).
 The same is true of a symlink's target.
 
-As a result, getattr and readlink are non-blocking if and only if the node's
-attributes have not timed out.  A node's attributes are considered valid for 30
-seconds. The last time a node was refreshed by a KIO::stat or KIO:: listDir is
-stored in m_lastStatRefresh.  Operations that send back a node's attributes
-checks if they have timed out, via the hasStatTimedOut() method and updates them
-as appropriate.
+As a result, getattr and readlink are non-blocking if the node's attributes
+have not timed out.
 
 setattr instead does block, it only returns if all of the requested operations
 (e.g. SET_ATTR_MTIME, SET_ATTR_MODE, SET_ATTR_UID) completed.
@@ -184,7 +187,25 @@ A node's children are considered valid for 30 seconds. The last time a node
 was dir listed via KIO::listDir is stored in m_lastChildrenRefreshed.
 Each readdir request checks if they have timed out via the
 haveChildrenTimedOut() method and updates the children (and consequently, their
-attributes) as appropriate.
+attributes) as appropriate. This is implemented in awaitChildrenComplete.
+
+Node Expiration
+---------------
+
+Each remote node has a timeout on its attributes and its children, which is
+currently set to 30 seconds.
+
+When a node's attributes are requested, the awaitAttrRefreshed method checks
+whether the attributes expired and if so, calls mountUrl to refresh it via
+updateNodeFromUDSEntry. If the result of KIO::stat indicates that the node does
+not exist on the remote side anymore it is (recursively) marked as deleted.
+Otherwise, a new node based on the fresh attributes is created and if the type
+matches, used to update the existing node. If the type does not match, the old
+node is marked as deleted and the new node inserted into the tree.
+
+For directories, awaitChildrenComplete calls KIO::listDir for refreshing the
+list of children, either removing vanished nodes, creating new nodes or
+updating existing ones using the same method as outlined above.
 
 File IO
 -------
@@ -227,16 +248,3 @@ simply not considered during kio-fuse development either.
 
 While inode and device numbers can be returned are part of UDSEntries returned
 from slaves, neither stat.st_link nor ::link are accessible.
-
-Node Dropping
----------
-
-Each remote node has a timeout on its attributes and it's children, which is
-currently set to 30 seconds. Before a KIO::stat is called to refresh a node's
-attributes or KIO::listDir is called to refresh a directory's children, an
-attempt is made to remove expired nodes via the dropNodeIfEligible() and
-dropChildrenIfEligible() methods respectively. Eligibility for removal is
-dependent on the node type and is described in the mentioned methods above, but
-a common condition between all nodes is that at the very least, it's lookup
-count must be 0. Whether the node or any of it's children are deleted or not,
-an attempt is made to recreate it via KIO::stat/KIO::listDir.
