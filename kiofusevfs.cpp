@@ -2293,7 +2293,7 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_UNKNOWN_HOST                 : return EHOSTUNREACH;
 		case KIO::ERR_ACCESS_DENIED                : return EPERM;
 		case KIO::ERR_WRITE_ACCESS_DENIED          : return EPERM;
-		case KIO::ERR_CANNOT_ENTER_DIRECTORY       : return ENOENT;
+		case KIO::ERR_CANNOT_ENTER_DIRECTORY       : return EIO;
 		case KIO::ERR_PROTOCOL_IS_NOT_A_FILESYSTEM : return EPROTOTYPE;
 		case KIO::ERR_CYCLIC_LINK                  : return ELOOP;
 		case KIO::ERR_USER_CANCELED                : return ECANCELED;
@@ -2325,8 +2325,8 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_INTERNAL_SERVER              : return EPROTO;
 		case KIO::ERR_SERVER_TIMEOUT               : return ETIMEDOUT;
 		case KIO::ERR_SERVICE_NOT_AVAILABLE        : return ENOPROTOOPT;
-		case KIO::ERR_UNKNOWN                      : return ENOENT;
-		case KIO::ERR_UNKNOWN_INTERRUPT            : return ENOENT;
+		case KIO::ERR_UNKNOWN                      : return EIO;
+		case KIO::ERR_UNKNOWN_INTERRUPT            : return EIO;
 		case KIO::ERR_CANNOT_DELETE_ORIGINAL       : return EIO;
 		case KIO::ERR_CANNOT_DELETE_PARTIAL        : return EIO;
 		case KIO::ERR_CANNOT_RENAME_ORIGINAL       : return EIO;
