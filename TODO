@@ -1,5 +1,3 @@
-General:
-- Integration into KIO/Plasma
 Filesystem features:
 - opendir/readdir/releasedir could be more POSIX compliant by increasing the lookup count of
   children and storing a copy of childrenInos in fuse_file_info.
@@ -9,9 +7,6 @@ Filesystem features:
   * ACLs (?)
   * interrupting requests (just killing the KIO Job would also break other requests for the
     same resource)
-- Refresh attributes of files/dirs and children of dirs after a while:
-  Currently directories are only listed once and files only stat'd once.
-  * Print a warning if a file with dirty cache got deleted? (renames can't be detected)
 - Umount support:
   Might not even be necessary - except for the nodes in RAM it does not use any resources
 KIO Slave support:
