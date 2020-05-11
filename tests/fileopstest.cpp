@@ -1,5 +1,6 @@
 /*
- * Copyright 2019 Fabian Vogt <fabian@ritter-vogt.de>
+ * Copyright 2019-20 Fabian Vogt <fabian@ritter-vogt.de>
+ * Copyright 2019-20 Alexander Saoutkin <a.saoutkin@gmail.com>
  *
  * This program is free software; you can redistribute it and/or 
  * modify it under the terms of the GNU General Public License as
