@@ -78,6 +78,11 @@ bool KIOFuseService::start(struct fuse_args &args, QString mountpoint, bool fore
 		return registerServiceDaemonized();
 }
 
+void KIOFuseServicePrivate::forceNodeTimeout()
+{
+	g_timeoutEpoch = std::chrono::steady_clock::now();
+}
+
 QString KIOFuseService::remoteUrl(const QString& localPath)
 {
 	// Massage URL into something KIOFuseVFS may understand.
@@ -133,7 +138,8 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 
 bool KIOFuseService::registerService()
 {
-	return QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this, QDBusConnection::ExportAllSlots)
+	return QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
+	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAdaptors)
 	    && QDBusConnection::sessionBus().registerService(QStringLiteral("org.kde.KIOFuse"));
 }
 

@@ -6,7 +6,7 @@ find_package(Qt5Test CONFIG REQUIRED)
 find_package(Qt5DBus CONFIG REQUIRED)
 
 qt5_add_dbus_interface(KIOFUSE_TEST_SOURCES org.kde.KIOFuse.VFS.xml kiofuse_interface)
-
+qt5_add_dbus_interface(KIOFUSE_TEST_SOURCES org.kde.KIOFuse.Private.xml kiofuseprivate_interface)
 
 add_executable(fileopstest-cache ${KIOFUSE_TEST_SOURCES})
 target_link_libraries(fileopstest-cache PRIVATE Qt5::Test Qt5::DBus)

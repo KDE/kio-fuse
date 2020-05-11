@@ -24,6 +24,7 @@
 
 #include <functional>
 #include <vector>
+#include <chrono>
 
 #include <QObject>
 #include <QUrl>
@@ -88,35 +89,56 @@ public:
 	NodeType type() const override { return Type; }
 };
 
-class KIOFuseRemoteDirNode : public QObject, public KIOFuseDirNode {
+// Used for automated testing of expiration.
+// Set by KIOFuseServicePrivate::forceNodeTimeout.
+extern std::chrono::steady_clock::time_point g_timeoutEpoch;
+
+class KIOFuseRemoteNodeInfo : public QObject {
+	Q_OBJECT
+public:
+	// Timeout for refreshing of attributes
+	static const std::chrono::steady_clock::duration ATTR_TIMEOUT;
+	// Override the URL
+	QUrl m_overrideUrl;
+	// Whether a stat was requested. If true, the signal "statRefreshed" will
+	// be emitted on finish.
+	bool m_statRequested = false;
+	// Stores the last time a node's m_stat field was refreshed via KIO::stat or a parent's KIO::listDir.
+	std::chrono::steady_clock::time_point m_lastStatRefresh = std::chrono::steady_clock::now();
+	// Returns true if a node is due for a stat refresh, false otherwise.
+	bool hasStatTimedOut() { return m_lastStatRefresh < g_timeoutEpoch || (std::chrono::steady_clock::now() - m_lastStatRefresh) >= ATTR_TIMEOUT; }
+Q_SIGNALS:
+	// Emitted after finishing (successful or not) a attr refresh on this node
+	void statRefreshed(int error);
+};
+
+class KIOFuseRemoteDirNode : public KIOFuseRemoteNodeInfo, public KIOFuseDirNode {
 	Q_OBJECT
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
 	static const NodeType Type = NodeType::RemoteDirNode;
 	NodeType type() const override { return Type; }
 
-	// Override the URL
-	QUrl m_overrideUrl;
-
-	// Whether the list of children is the result of a successful dirlist
-	bool m_childrenComplete = false;
 	// Whether a dirlist was requested. If true, the signal "gotChildren" will
 	// be emitted on finish.
 	bool m_childrenRequested = false;
+	// Stores the last time a node's children were refreshed via KIO::listDir.
+	std::chrono::steady_clock::time_point m_lastChildrenRefresh;
+	// Returns true if a node is due for a readdir refresh, false otherwise.
+	bool haveChildrenTimedOut() { return m_lastChildrenRefresh < g_timeoutEpoch || (std::chrono::steady_clock::now() - m_lastChildrenRefresh) >= ATTR_TIMEOUT; }
 
 Q_SIGNALS:
 	// Emitted after finishing (successful or not) a distlist on this node
 	void gotChildren(int error);
 };
 
-class KIOFuseRemoteFileNode : public KIOFuseNode {
+class KIOFuseRemoteFileNode : public KIOFuseRemoteNodeInfo, public KIOFuseNode {
+	Q_OBJECT
 public:
 	using KIOFuseNode::KIOFuseNode;
-	// Override the URL (used for UDS_URL)
-	QUrl m_overrideUrl;
 };
 
-class KIOFuseRemoteCacheBasedFileNode : public QObject, public KIOFuseRemoteFileNode {
+class KIOFuseRemoteCacheBasedFileNode : public KIOFuseRemoteFileNode {
 	Q_OBJECT
 public:
 	using KIOFuseRemoteFileNode::KIOFuseRemoteFileNode;
@@ -134,7 +156,6 @@ public:
 	     m_cacheDirty = false, // Set on every write to m_localCache, cleared when a flush starts
 	     m_flushRunning = false; // If a flush is currently running
 	int m_numKilledJobs = 0; // reset on successful flush, incremented every time job is killed because cache is dirty (among other factors)
-
 Q_SIGNALS:
 	// Emitted when a download operation on this node made progress, finished or failed.
 	void localCacheChanged(int error);
@@ -143,7 +164,7 @@ Q_SIGNALS:
 };
 
 
-class KIOFuseRemoteFileJobBasedFileNode : public QObject, public KIOFuseRemoteFileNode {
+class KIOFuseRemoteFileJobBasedFileNode : public KIOFuseRemoteFileNode {
 	Q_OBJECT
 public:
 	using KIOFuseRemoteFileNode::KIOFuseRemoteFileNode;
@@ -151,8 +172,7 @@ public:
 	NodeType type() const override { return Type; }
 };
 
-class KIOFuseSymLinkNode : public QObject, public KIOFuseNode {
-	Q_OBJECT
+class KIOFuseSymLinkNode : public KIOFuseRemoteNodeInfo, public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
 	static const NodeType Type = NodeType::RemoteSymlinkNode;

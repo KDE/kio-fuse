@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <signal.h>
+#include <chrono>
 
 #ifdef Q_OS_LINUX
 #include <linux/fs.h>
@@ -86,6 +87,9 @@ struct KIOFuseVFS::FuseLLOps : public fuse_lowlevel_ops
 
 const struct KIOFuseVFS::FuseLLOps KIOFuseVFS::fuse_ll_ops;
 
+const std::chrono::steady_clock::duration KIOFuseRemoteNodeInfo::ATTR_TIMEOUT = std::chrono::seconds(30);
+std::chrono::steady_clock::time_point g_timeoutEpoch = {};
+
 /* Handles partial writes and EINTR.
  * Returns true only if count bytes were written successfully. */
 static bool sane_write(int fd, const void *buf, size_t count)
@@ -136,6 +140,11 @@ static bool sane_read(int fd, void *buf, size_t count)
 	}
 
 	return true;
+}
+
+static bool operator <(const struct timespec &a, const struct timespec &b)
+{
+	return (a.tv_sec == b.tv_sec) ? (a.tv_nsec < b.tv_nsec) : (a.tv_sec < b.tv_sec);
 }
 
 int KIOFuseVFS::signalFd[2];
@@ -291,7 +300,10 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		return;
 	}
 
-	that->replyAttr(req, node);
+	return that->awaitAttrRefreshed(node, [=] (int error) {
+		Q_UNUSED(error); // Just send the old attr...
+		replyAttr(req, node);
+	});
 }
 
 void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, fuse_file_info *fi)
@@ -537,13 +549,17 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 		return;
 	}
 
-	if(node->type() != KIOFuseNode::NodeType::RemoteSymlinkNode)
+	auto symlinkNode = std::dynamic_pointer_cast<KIOFuseSymLinkNode>(node);
+	if(!symlinkNode)
 	{
 		fuse_reply_err(req, EINVAL);
 		return;
 	}
 
-	fuse_reply_readlink(req, std::dynamic_pointer_cast<KIOFuseSymLinkNode>(node)->m_target.toUtf8().data());
+	that->awaitAttrRefreshed(node, [=](int error) {
+		Q_UNUSED(error); // Just send the old target...
+		fuse_reply_readlink(req, symlinkNode->m_target.toUtf8().data());
+	});
 }
 
 void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev)
@@ -871,7 +887,9 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		std::vector<char> dirbuf;
 		appendDirentry(dirbuf, req, ".", &node->m_stat);
 
-		auto parentNode = that->nodeForIno(node->m_parentIno);
+		std::shared_ptr<KIOFuseNode> parentNode;
+		if(node->m_parentIno != KIOFuseIno::DeletedRoot)
+			parentNode = that->nodeForIno(node->m_parentIno);
 		if(!parentNode)
 			parentNode = that->nodeForIno(KIOFuseIno::Root);
 		if(parentNode)
@@ -957,6 +975,13 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
 	{
 		qDebug(KIOFUSE_LOG) << "Reading" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
+
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+		{
+			fuse_reply_err(req, ENOENT);
+			return;
+		}
+
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
 		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadOnly);
 		connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
@@ -1075,6 +1100,13 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
 	{
 		qDebug(KIOFUSE_LOG) << "Writing" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
+
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+		{
+			fuse_reply_err(req, ENOENT);
+			return;
+		}
+
 		QByteArray data(buf, size); // Copy data
 		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
 		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadWrite);
@@ -1261,8 +1293,15 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 
 	QString nodeName = QString::fromUtf8(name);
 
-	if(auto child = that->nodeByName(parentNode, nodeName))
-		return that->replyEntry(req, child);
+	if(auto child = that->nodeByName(parentNode, nodeName)) // Part of the tree?
+	{
+		return that->awaitAttrRefreshed(child, [=](int error) {
+			Q_UNUSED(error);
+			// Lookup again, node might've been replaced or deleted
+			auto child = that->nodeByName(parentNode, nodeName);
+			that->replyEntry(req, child);
+		});
+	}
 
 	QUrl url = that->remoteUrl(parentNode);
 	if(url.isEmpty())
@@ -1388,17 +1427,10 @@ QUrl KIOFuseVFS::sanitizeNullAuthority(QUrl url) const
 
 QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 {
-	// Special handling for KIOFuseRemoteFileNode
-	if(auto remoteFileNode = std::dynamic_pointer_cast<const KIOFuseRemoteFileNode>(node))
-	{
-		if(!remoteFileNode->m_overrideUrl.isEmpty())
-			return sanitizeNullAuthority(remoteFileNode->m_overrideUrl);
-	}
-
 	QStringList path;
 	for(const KIOFuseNode *currentNode = node.get(); currentNode != nullptr; currentNode = nodeForIno(currentNode->m_parentIno).get())
 	{
-		auto remoteDirNode = dynamic_cast<const KIOFuseRemoteDirNode*>(currentNode);
+		auto remoteDirNode = dynamic_cast<const KIOFuseRemoteNodeInfo*>(currentNode);
 		if(remoteDirNode && !remoteDirNode->m_overrideUrl.isEmpty())
 		{
 			// Origin found - add path and return
@@ -1467,7 +1499,17 @@ void KIOFuseVFS::decrementLookupCount(const std::shared_ptr<KIOFuseNode> node, u
 }
 
 void KIOFuseVFS::markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node)
-{	
+{
+	if(auto dirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(node))
+	{
+		// Mark all children as deleted first (flatten the hierarchy)
+		for (auto childIno : std::vector<fuse_ino_t>(dirNode->m_childrenInos))
+			if(auto childNode = nodeForIno(childIno))
+				markNodeDeleted(childNode);
+	}
+
+	qDebug(KIOFUSE_LOG) << "Marking node" << node->m_nodeName << "as deleted";
+
 	reparentNode(node, KIOFuseIno::DeletedRoot);
 	decrementLookupCount(node, 0); // Trigger reevaluation
 }
@@ -1478,7 +1520,7 @@ void KIOFuseVFS::replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 	node->m_stat.st_blocks = (node->m_stat.st_size + node->m_stat.st_blksize - 1) / node->m_stat.st_blksize;
 
 	// TODO: Validity timeout?
-	fuse_reply_attr(req, &node->m_stat, 1);
+	fuse_reply_attr(req, &node->m_stat, 0);
 }
 
 void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
@@ -1491,8 +1533,8 @@ void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 		incrementLookupCount(node);
 
 		entry.ino = node->m_stat.st_ino;
-		entry.attr_timeout = 1.0;
-		entry.entry_timeout = 1.0;
+		entry.attr_timeout = 0.0;
+		entry.entry_timeout = 0.0;
 		entry.attr = node->m_stat;
 	}
 
@@ -1600,6 +1642,86 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	}
 }
 
+std::shared_ptr<KIOFuseNode> KIOFuseVFS::updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node, const KIO::UDSEntry &entry)
+{
+	qDebug(KIOFUSE_LOG) << "Updating attributes of" << node->m_nodeName;
+
+	// Updating a node works by creating a new node and merging their attributes
+	// (both m_stat and certain other class attributes) together.
+	// This is broadly done with node->m_stat = newNode->m_stat;
+	// However, there are some things we may not want to copy straight from the
+	// new node into the node to be updated and so we update newNode as
+	// appropriate before merging.
+	auto newNode = createNodeFromUDSEntry(entry, node->m_parentIno, node->m_nodeName);
+	if (!newNode)
+	{
+		qWarning(KIOFUSE_LOG) << "Could not create new node for" << node->m_nodeName;
+		return node;
+	}
+
+	if (newNode->type() != node->type())
+	{
+		if(node->m_parentIno != KIOFuseIno::DeletedRoot)
+		{
+			markNodeDeleted(node);
+			insertNode(newNode);
+			return newNode;
+		}
+		return node;
+	}
+
+	const bool newMtimNewer = node->m_stat.st_mtim < newNode->m_stat.st_mtim;
+	// Take the newer time value
+	if (!newMtimNewer)
+		newNode->m_stat.st_mtim = node->m_stat.st_mtim;
+
+	if (newNode->m_stat.st_atim < node->m_stat.st_atim)
+		newNode->m_stat.st_atim = node->m_stat.st_atim;
+
+	if (auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
+	{
+		if(newMtimNewer || newNode->m_stat.st_size != node->m_stat.st_size)
+		{
+			// Someone has changed something server side, lets get those changes.
+			if(cacheBasedFileNode->m_cacheDirty || cacheBasedFileNode->m_flushRunning)
+			{
+				if(newMtimNewer)
+					qWarning(KIOFUSE_LOG) << cacheBasedFileNode->m_nodeName << "cache is dirty but file has also been changed by something else";
+
+				newNode->m_stat.st_size = cacheBasedFileNode->m_stat.st_size;
+			}
+			else if(cacheBasedFileNode->m_localCache && cacheBasedFileNode->cacheIsComplete())
+			{
+				// Our cache isn't dirty but the file has changed, our current cache is invalid
+				// and we can safely get rid of it.
+				fclose(cacheBasedFileNode->m_localCache);
+				cacheBasedFileNode->m_cacheSize = 0;
+				cacheBasedFileNode->m_cacheComplete = false;
+				cacheBasedFileNode->m_localCache = nullptr;
+			}
+		}
+	}
+	else if (auto oldSymlinkNode = std::dynamic_pointer_cast<KIOFuseSymLinkNode>(node))
+	{
+		auto newSymlinkNode = std::dynamic_pointer_cast<KIOFuseSymLinkNode>(newNode);
+		oldSymlinkNode->m_target = newSymlinkNode->m_target;
+	}
+
+	auto oldRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
+	auto newRemoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(newNode);
+
+	oldRemoteNode->m_lastStatRefresh = std::chrono::steady_clock::now();
+
+	// oldRemoteNode->m_overrideUrl could've been set by mountUrl, don't clear it
+	if (!newRemoteNode->m_overrideUrl.isEmpty())
+		oldRemoteNode->m_overrideUrl = newRemoteNode->m_overrideUrl;
+
+	// Preserve the inode number
+	newNode->m_stat.st_ino = node->m_stat.st_ino;
+	node->m_stat = newNode->m_stat;
+	return node;
+}
+
 void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, std::function<void(int error)> callback)
 {
 	if(bytes < 0)
@@ -1615,6 +1737,9 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBas
 
 	if(!node->m_localCache)
 	{
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+			return callback(ENOENT);
+
 		// Create a temporary file
 		node->m_localCache = tmpfile();
 
@@ -1709,32 +1834,54 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 	if(!remoteNode)
 		return callback(0); // Not a remote node
 
-	if(remoteNode->m_childrenComplete)
-		return callback(0);
+	if(!remoteNode->haveChildrenTimedOut())
+		return callback(0); // Children complete and up to date
 
 	if(!remoteNode->m_childrenRequested)
 	{
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+			return callback(0);
+
+		auto childrenNotSeen = std::make_shared<std::vector<fuse_ino_t>>(remoteNode->m_childrenInos);
+
 		// List the remote dir
+		auto refreshTime = std::chrono::steady_clock::now();
 		auto *job = KIO::listDir(remoteUrl(remoteNode));
 		connect(job, &KIO::ListJob::entries, [=](auto *job, const KIO::UDSEntryList &entries) {
-			Q_UNUSED(job);
-
 			for(auto &entry : entries)
 			{
+				// Inside the loop because refreshing "." might drop it
+				if(remoteNode->m_parentIno == KIOFuseIno::DeletedRoot)
+				{
+					job->kill(KJob::EmitResult);
+					return;
+				}
+
 				QString name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
 
-				// Ignore "." and ".."
-				if(name == QStringLiteral(".") || name == QStringLiteral(".."))
+				// Refresh "." and ignore ".."
+				if(name == QStringLiteral("."))
+				{
+					updateNodeFromUDSEntry(remoteNode, entry);
+					continue;
+				}
+				else if(name == QStringLiteral(".."))
 				   continue;
 
 				auto childrenNode = nodeByName(remoteNode, name);
 				if(childrenNode)
-					// TODO: Verify that the type matches.
-					// It's possible that something was mounted as a directory,
-					// but it's actually a symlink :-/
-					continue;
+				{
+					auto it = std::find(begin(*childrenNotSeen), end(*childrenNotSeen),
+					                    childrenNode->m_stat.st_ino);
+					if(it != end(*childrenNotSeen))
+						childrenNotSeen->erase(it);
 
-				childrenNode = createNodeFromUDSEntry(entry, remoteNode->m_stat.st_ino);
+					// Try to update existing node
+					updateNodeFromUDSEntry(childrenNode, entry);
+					continue;
+				}
+
+				childrenNode = createNodeFromUDSEntry(entry, remoteNode->m_stat.st_ino, name);
 				if(!childrenNode)
 				{
 					qWarning(KIOFUSE_LOG) << "Could not create node for" << name;
@@ -1747,13 +1894,22 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		connect(job, &KIO::ListJob::result, [=] {
 			remoteNode->m_childrenRequested = false;
 
-			if(job->error())
-				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
-			else
+			if(job->error() && job->error() != KJob::KilledJobError)
 			{
-				remoteNode->m_childrenComplete = true;
-				emit remoteNode->gotChildren(0);
+				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
+				return;
 			}
+
+			for(auto ino : *childrenNotSeen)
+			{
+				auto childNode = nodeForIno(ino);
+				// Was not refreshed as part of this listDir operation, drop it
+				if(childNode && childNode->m_parentIno == node->m_stat.st_ino)
+					markNodeDeleted(childNode);
+			}
+
+			remoteNode->m_lastChildrenRefresh = refreshTime;
+			emit remoteNode->gotChildren(0);
 		});
 
 		remoteNode->m_childrenRequested = true;
@@ -1876,7 +2032,10 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 
 		// Finally create the last component
 		auto finalNode = nodeByName(pathNode, pathElements.last());
-		if(!finalNode)
+		if(finalNode)
+			// Note that node may fail to update, but this type of error is ignored.
+			finalNode = updateNodeFromUDSEntry(finalNode, statJob->statResult());
+		else
 		{
 			// The remote name (statJob->statResult().stringValue(KIO::UDSEntry::UDS_NAME)) has to be
 			// ignored as it can be different from the path. e.g. tar:/foo.tar/ is "/"
@@ -2015,7 +2174,46 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedF
 	);
 }
 
-bool KIOFuseVFS::setupSignalHandlers() 
+void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, std::function<void (int)> callback)
+{
+	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
+	if(!remoteNode || !remoteNode->hasStatTimedOut())
+		return callback(0); // Node not remote, or it hasn't timed out yet
+
+	// To do the same request as the initial mount or lookup, build the URL from the parent
+	auto parentNode = nodeForIno(node->m_parentIno);
+	auto remoteParentNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(parentNode);
+	QUrl url;
+	if(!remoteParentNode || (url = remoteUrl(parentNode)).isEmpty())
+		return callback(0); // Parent not remote
+
+	if(!remoteNode->m_statRequested)
+	{
+		qDebug(KIOFUSE_LOG) << "Refreshing attributes of node" << node->m_nodeName;
+		url.setPath(url.path() + QLatin1Char('/') + node->m_nodeName);
+		remoteNode->m_statRequested = true;
+		mountUrl(url, [=] (auto mountedNode, int error) {
+			if(error == ENOENT)
+				markNodeDeleted(node);
+
+			Q_UNUSED(mountedNode);
+			remoteNode->m_statRequested = false;
+			emit remoteNode->statRefreshed(error);
+		});
+	}
+
+	// Using a unique_ptr here to let the lambda disconnect the connection itself
+	auto connection = std::make_unique<QMetaObject::Connection>();
+	auto &conn = *connection;
+	conn = connect(remoteNode.get(), &KIOFuseRemoteNodeInfo::statRefreshed,
+				   [=, connection = std::move(connection)](int error) {
+		callback(error);
+		remoteNode->disconnect(*connection);
+	}
+	);
+}
+
+bool KIOFuseVFS::setupSignalHandlers()
 {
 	// Create required socketpair for custom signal handling
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, signalFd)) {
@@ -2094,7 +2292,7 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_UNKNOWN_HOST                 : return EHOSTUNREACH;
 		case KIO::ERR_ACCESS_DENIED                : return EPERM;
 		case KIO::ERR_WRITE_ACCESS_DENIED          : return EPERM;
-		case KIO::ERR_CANNOT_ENTER_DIRECTORY       : return ENOENT;
+		case KIO::ERR_CANNOT_ENTER_DIRECTORY       : return EIO;
 		case KIO::ERR_PROTOCOL_IS_NOT_A_FILESYSTEM : return EPROTOTYPE;
 		case KIO::ERR_CYCLIC_LINK                  : return ELOOP;
 		case KIO::ERR_USER_CANCELED                : return ECANCELED;
@@ -2126,8 +2324,8 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_INTERNAL_SERVER              : return EPROTO;
 		case KIO::ERR_SERVER_TIMEOUT               : return ETIMEDOUT;
 		case KIO::ERR_SERVICE_NOT_AVAILABLE        : return ENOPROTOOPT;
-		case KIO::ERR_UNKNOWN                      : return ENOENT;
-		case KIO::ERR_UNKNOWN_INTERRUPT            : return ENOENT;
+		case KIO::ERR_UNKNOWN                      : return EIO;
+		case KIO::ERR_UNKNOWN_INTERRUPT            : return EIO;
 		case KIO::ERR_CANNOT_DELETE_ORIGINAL       : return EIO;
 		case KIO::ERR_CANNOT_DELETE_PARTIAL        : return EIO;
 		case KIO::ERR_CANNOT_RENAME_ORIGINAL       : return EIO;

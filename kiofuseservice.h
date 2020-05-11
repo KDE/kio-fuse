@@ -27,8 +27,21 @@
 #include <QDBusContext>
 #include <QTemporaryDir>
 #include <QStandardPaths>
+#include <QDBusAbstractAdaptor>
 
 #include "kiofusevfs.h"
+
+class KIOFuseServicePrivate : public QDBusAbstractAdaptor {
+	Q_OBJECT
+	Q_CLASSINFO("D-Bus Interface", "org.kde.KIOFuse.Private")
+
+public:
+	KIOFuseServicePrivate(QObject *obj) : QDBusAbstractAdaptor(obj) {}
+
+public Q_SLOTS:
+	/** Treat all nodes as expired, to not have to wait in automated testing. */
+	void forceNodeTimeout();
+};
 
 class KIOFuseService : public QObject, protected QDBusContext
 {
@@ -61,4 +74,6 @@ private:
 	std::optional<QTemporaryDir> m_tempDir;
 	/** A list of protocols that are blacklisted (for various reasons). */
 	static const QStringList m_blacklist;
+	/** DBus Adaptor exported as org.kde.KIOFuse.Private interface. */
+	KIOFuseServicePrivate m_privateInterface{this};
 };

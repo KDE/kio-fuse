@@ -106,10 +106,17 @@ instantiated as one of its subclasses (KIOFuseRemoteCacheBasedNode or
 KIOFuseRemoteFileJobBasedNode). The type of class instantiated will depend on
 the URL of the file. Please see the "File I/O" section to learn more.
 
-Both kinds of remote nodes (KIOFuseRemoteDirNode, KIOFuseRemoteFileNode) have
-an m_overrideUrl member which is used to implement URL mountpoints and
-redirections. To get the remote URL of a node, the tree is traversed upwards
-until an override is found and the path is appended.
+Remote nodes (KIOFuseRemote*Node) are derived from KIOFuseRemoteFileInfo in
+addition to the base node type, which contains some members specific for remote
+access.
+
+m_overrideUrl is used to implement URL mountpoints and redirections. To get the
+remote URL of a node, the tree is traversed upwards until an override is found
+and the path is appended.
+
+m_lastStatRefresh stores the time when m_stat was updated last. It's updated
+on node construction and by updateNodeFromUDSEntry and queried by the
+awaitAttrRefreshed method.
 
 Unlinking a node
 ----------------
@@ -162,7 +169,9 @@ inserting it into the tree. This happens when mounting a URL (uses KIO::stat)
 and when requesting the children of a URL (using KIO::listDir with details).
 The same is true of a symlink's target.
 
-As a result, getattr and readlink are non-blocking.
+As a result, getattr and readlink are non-blocking if the node's attributes
+have not timed out.
+
 setattr instead does block, it only returns if all of the requested operations
 (e.g. SET_ATTR_MTIME, SET_ATTR_MODE, SET_ATTR_UID) completed.
 
@@ -174,8 +183,29 @@ API offers, children of KIOFuseRemoteDirNode are loaded lazily. This means
 that the full list of children is only requested (using KIO::listDir) if
 required, so if lookup on the directory fails or if readdir is executed.
 
-This is implemented using bool m_childrenComplete and the
-awaitChildrenComplete method in KIOFuseVFS.
+A node's children are considered valid for 30 seconds. The last time a node
+was dir listed via KIO::listDir is stored in m_lastChildrenRefreshed.
+Each readdir request checks if they have timed out via the
+haveChildrenTimedOut() method and updates the children (and consequently, their
+attributes) as appropriate. This is implemented in awaitChildrenComplete.
+
+Node Expiration
+---------------
+
+Each remote node has a timeout on its attributes and its children, which is
+currently set to 30 seconds.
+
+When a node's attributes are requested, the awaitAttrRefreshed method checks
+whether the attributes expired and if so, calls mountUrl to refresh it via
+updateNodeFromUDSEntry. If the result of KIO::stat indicates that the node does
+not exist on the remote side anymore it is (recursively) marked as deleted.
+Otherwise, a new node based on the fresh attributes is created and if the type
+matches, used to update the existing node. If the type does not match, the old
+node is marked as deleted and the new node inserted into the tree.
+
+For directories, awaitChildrenComplete calls KIO::listDir for refreshing the
+list of children, either removing vanished nodes, creating new nodes or
+updating existing ones using the same method as outlined above.
 
 File IO
 -------

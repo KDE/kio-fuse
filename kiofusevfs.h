@@ -134,7 +134,10 @@ private:
 	/** Depending on the lookup count, it makes the node a child of DeletedRoot or deletes it directly. */
 	void markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node);
 	/** Creates a new node with the matching type and fills m_stat fields. */
-	std::shared_ptr<KIOFuseNode> createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride={});
+	std::shared_ptr<KIOFuseNode> createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride);
+	/** Applies a fresh KIO::UDSEntry to an existing node. If the type needs changing,
+	 * The old node is deleted and a new one inserted instead. The now fresh node is returned. */
+	std::shared_ptr<KIOFuseNode> updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node, const KIO::UDSEntry &entry);
 
 	/** Sends the node's attributes with fuse_reply_attr. */
 	static void replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node);
@@ -154,6 +157,8 @@ private:
 	/** Calls the callback once the cache is not dirty anymore (no cache counts as clean as well).
 	  * If writes happen while a flush is sending data, a flush will be retriggered. */
 	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void(int error)> callback);
+	/** Invokes callback on error or when a node has been refreshed (if its stat timed out) */
+	void awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, std::function<void(int error)> callback);
 
 	/** Returns the override URL for an origin node */
 	QUrl makeOriginUrl(QUrl url);
