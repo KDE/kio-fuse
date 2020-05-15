@@ -191,19 +191,18 @@ bool KIOFuseVFS::start(struct fuse_args &args, const QString& mountpoint)
 
 void KIOFuseVFS::stop()
 {
-	if(m_fuseSession)
-	{
-		// Disable the QSocketNotifier
-		m_fuseNotifier.reset();
+	if(!m_fuseSession) // Not started or already (being) stopped. Avoids reentrancy.
+		return;
 
-		// Disarm the QEventLoopLocker
-		m_eventLoopLocker.reset();
+	// Disable the QSocketNotifier
+	m_fuseNotifier.reset();
 
-		removeSignalHandlers();
-		fuse_session_unmount(m_fuseSession);
-		fuse_session_destroy(m_fuseSession);
-		m_fuseSession = nullptr;
-	}
+	// Disarm the QEventLoopLocker
+	m_eventLoopLocker.reset();
+
+	fuse_session_unmount(m_fuseSession);
+	fuse_session_destroy(m_fuseSession);
+	m_fuseSession = nullptr;
 
 	// Flush all dirty nodes
 	QEventLoop loop;
@@ -230,6 +229,9 @@ void KIOFuseVFS::stop()
 
 	if(needEventLoop)
 		loop.exec(); // Wait until all QEventLoopLockers got destroyed
+
+	// FIXME: If a signal arrives after this, it would be fatal.
+	removeSignalHandlers();
 }
 
 void KIOFuseVFS::fuseRequestPending()
