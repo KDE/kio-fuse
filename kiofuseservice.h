@@ -47,6 +47,10 @@ public Q_SLOTS:
 	/** Converts a local path into a remote URL if it is mounted within the VFS */
 	QString remoteUrl(const QString &localPath);
 
+private Q_SLOTS:
+	/** Stops the VFS when the DBus connection is lost. */
+	void dbusDisconnected();
+
 private:
 	/** Registers the kio-fuse process as the org.kde.KIOFuse service.
 	  * Returns false if this fails (otherwise you can't communicate with the process), true otherwise.*/

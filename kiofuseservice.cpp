@@ -89,6 +89,12 @@ QString KIOFuseService::remoteUrl(const QString& localPath)
 	return remoteUrl.toString(QUrl::RemovePassword);
 }
 
+void KIOFuseService::dbusDisconnected()
+{
+	qInfo(KIOFUSE_LOG) << "DBus disconnected - stopping.";
+	kiofusevfs.stop();
+}
+
 QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& message)
 {
 	message.setDelayedReply(true);
@@ -124,9 +130,15 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 
 bool KIOFuseService::registerService()
 {
-	return QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
+	if(QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
 	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAdaptors)
-	    && QDBusConnection::sessionBus().registerService(QStringLiteral("org.kde.KIOFuse"));
+	    && QDBusConnection::sessionBus().registerService(QStringLiteral("org.kde.KIOFuse")))
+	{
+		QDBusConnection::sessionBus().connect({}, QStringLiteral("/org/freedesktop/DBus/Local"), QStringLiteral("org.freedesktop.DBus.Local"), QStringLiteral("Disconnected"), this, SLOT(dbusDisconnected()));
+		return true;
+	}
+
+	return false;
 }
 
 bool KIOFuseService::registerServiceDaemonized()
