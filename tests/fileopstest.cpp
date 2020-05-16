@@ -497,7 +497,6 @@ void FileOpsTest::testRenameOps()
 	QCOMPARE(overwrittenFile.readAll(), QStringLiteral("data").toUtf8());
 #else
 	// Doesn't apply to FileJob (KIO::open) I/O
-	QCOMPARE(overwrittenFile.readAll(), QStringLiteral("").toUtf8());
 #endif
 
 	localFile.close();
