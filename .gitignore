@@ -60,6 +60,9 @@ build
 *.vcxproj
 *vcxproj.*
 
+# Visual Studio Code auto generated files
+.vscode
+
 # MinGW generated files
 *.Debug
 *.Release
