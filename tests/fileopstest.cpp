@@ -43,6 +43,7 @@ private Q_SLOTS:
 	void testFileRefresh();
 	void testSymlinkRefresh();
 	void testTypeRefresh();
+	void testDirSymlink();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -813,6 +814,44 @@ void FileOpsTest::testTypeRefresh()
 	// The opened file still refers to the (now deleted) file
 	QCOMPARE(fstat(changingMirrorFile.handle(), &st), 0);
 	QCOMPARE(st.st_mode & S_IFMT, S_IFREG);
+}
+
+void FileOpsTest::testDirSymlink()
+{
+	QTemporaryDir localTmpDir;
+	QVERIFY(localTmpDir.isValid());
+	QDir localDir(localTmpDir.path());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// Create a directory (with a dir inside) and a symlink to the parent
+	QVERIFY(mirrorDir.mkpath(QStringLiteral("realdir/child")));
+	QCOMPARE(symlink("realdir/../realdir",
+	                 qPrintable(mirrorDir.filePath(QStringLiteral("linktodir")))), 0);
+
+	// Verify that it was correctly created everywhere
+	QVERIFY(mirrorDir.exists(QStringLiteral("linktodir/child")));
+	QVERIFY(localDir.exists(QStringLiteral("linktodir/child")));
+	QVERIFY(localDir.exists(QStringLiteral("realdir/child")));
+
+	// Verify that remoteUrl contains the exact path
+	auto remoteUrlReply = m_kiofuse_iface.remoteUrl(mirrorDir.filePath(QStringLiteral("linktodir/child")));
+	remoteUrlReply.waitForFinished();
+	QEXPECT_FAIL("", "Not implemented", Continue);
+	QVERIFY(!remoteUrlReply.isError());
+	QEXPECT_FAIL("", "Not implemented", Continue);
+	QCOMPARE(QUrl{remoteUrlReply.value()}, QUrl::fromLocalFile(localDir.filePath(QStringLiteral("linktodir/child"))));
+
+	// Verify that the child can be mounted through linktodir
+	auto mountReply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.filePath(QStringLiteral("linktodir/child"))));
+	mountReply.waitForFinished();
+	QEXPECT_FAIL("", "Not implemented", Continue);
+	QVERIFY(!mountReply.isError());
 }
 
 #ifdef WASTE_DISK_SPACE
