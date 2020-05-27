@@ -646,13 +646,14 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 	}
 
 	// Make sure the to-be deleted node is in a remote dir
-	if(!std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(parentNode))
+	auto parentDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(parentNode);
+	if(!parentDirNode)
 	{
 		fuse_reply_err(req, EINVAL);
 		return;
 	}
 
-	auto node = that->nodeByName(parentNode, QString::fromUtf8(name));
+	auto node = that->nodeByName(parentDirNode, QString::fromUtf8(name));
 	if(!node)
 	{
 		fuse_reply_err(req, ENOENT);
@@ -1239,9 +1240,9 @@ bool KIOFuseVFS::isEnvironmentValid()
 	return true;
 }
 
-std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFuseNode> &parent, const QString name) const
+std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString name) const
 {
-	for(auto ino : std::dynamic_pointer_cast<const KIOFuseDirNode>(parent)->m_childrenInos)
+	for(auto ino : parent->m_childrenInos)
 	{
 		auto child = nodeForIno(ino);
 		if(!child)
@@ -1389,9 +1390,9 @@ QUrl KIOFuseVFS::localPathToRemoteUrl(const QString& localPath) const
 	auto node = nodeForIno(KIOFuseIno::Root);
 	for (const auto &segment : localPath.split(QStringLiteral("/")))
 	{
-		 node = nodeByName(node, segment);
-		 if(!node)
-			 return {};
+		auto dirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(node);
+		if(!dirNode || !(node = nodeByName(dirNode, segment)))
+			return {};
 	}
 	return remoteUrl(node);
 }
@@ -1932,7 +1933,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 
 		// Success - create an entry
 
-		auto rootNode = nodeForIno(KIOFuseIno::Root);
+		auto rootNode = std::dynamic_pointer_cast<KIOFuseDirNode>(nodeForIno(KIOFuseIno::Root));
 		auto protocolNode = rootNode;
 
 		// Depending on whether the URL has an "authority" component or not,
@@ -1945,9 +1946,16 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 		if(!url.authority().isEmpty())
 		{
 			// Authority exists -> create a ProtocolNode as intermediate
-			protocolNode = nodeByName(rootNode, url.scheme());
+			auto maybeProtocolNode = nodeByName(rootNode, url.scheme());
+			protocolNode = std::dynamic_pointer_cast<KIOFuseDirNode>(maybeProtocolNode);
 			if(!protocolNode)
 			{
+				if(maybeProtocolNode)
+				{
+					qWarning(KIOFUSE_LOG) << "Protocol node" << maybeProtocolNode->m_nodeName << "not a dir?";
+					return callback(nullptr, EIO);
+				}
+
 				struct stat attr = {};
 				fillStatForFile(attr);
 				attr.st_mode = S_IFDIR | 0755;
@@ -1964,24 +1972,26 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 			originNodeName = url.scheme();
 		}
 
-		auto originNode = nodeByName(protocolNode, originNodeName);
+		auto maybeOriginNode = nodeByName(protocolNode, originNodeName);
+		auto originNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(maybeOriginNode);
 
 		if(!originNode)
 		{
+			if(maybeOriginNode)
+			{
+				qWarning(KIOFUSE_LOG) << "Origin node" << maybeOriginNode->m_nodeName << "not a remote dir?";
+				return callback(nullptr, EIO);
+			}
+
 			struct stat attr = {};
 			fillStatForFile(attr);
 			attr.st_mode = S_IFDIR | 0755;
 
-			auto newOriginNode = std::make_shared<KIOFuseRemoteDirNode>(protocolNode->m_stat.st_ino, originNodeName, attr);
-			newOriginNode->m_overrideUrl = makeOriginUrl(url);
-
-			originNode = newOriginNode;
+			originNode = std::make_shared<KIOFuseRemoteDirNode>(protocolNode->m_stat.st_ino, originNodeName, attr);
 			insertNode(originNode);
 		}
-		else if(auto remoteDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(originNode))
-			remoteDirNode->m_overrideUrl = makeOriginUrl(url); // Allow the user to change the password
-		else
-			return callback(nullptr, EIO);
+
+		originNode->m_overrideUrl = makeOriginUrl(url); // Allow the user to change the password
 
 		// Create all path components as directories
 		auto pathNode = originNode;
@@ -2003,9 +2013,16 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 			if(pathElements[i].isEmpty())
 				break;
 
-			auto subdirNode = nodeByName(pathNode, pathElements[i]);
+			auto maybeSubdirNode = nodeByName(pathNode, pathElements[i]);
+			auto subdirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(maybeSubdirNode);
 			if(!subdirNode)
 			{
+				if(maybeSubdirNode)
+				{
+					qWarning(KIOFUSE_LOG) << "Subdir node" << maybeSubdirNode->m_nodeName << "not a remote dir?";
+					return callback(nullptr, EIO);
+				}
+
 				struct stat attr = {};
 				fillStatForFile(attr);
 				attr.st_mode = S_IFDIR | 0755;

@@ -98,7 +98,7 @@ private:
 	static void signalHandler(int signal);
 
 	/** Returns a pointer to a child node of parent with m_nodeName == name or nullptr. */
-	std::shared_ptr<KIOFuseNode> nodeByName(const std::shared_ptr<KIOFuseNode> &parent, const QString name) const;
+	std::shared_ptr<KIOFuseNode> nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString name) const;
 	/** Returns a pointer to the KIOFuseNode with inode number ino or nullptr. */
 	std::shared_ptr<KIOFuseNode> nodeForIno(const fuse_ino_t ino) const;
 	/** Removes the node from the old parent's children list (if any) and adds it to the new parent's list.*/

@@ -135,6 +135,12 @@ void FileOpsTest::testLocalPathToRemoteUrl()
 	QVERIFY(!reply.isEmpty());
 	QString calculatedRemoteUrl = m_kiofuse_iface.remoteUrl(reply).value();
 	QCOMPARE(remoteUrl, calculatedRemoteUrl);
+
+	// Path is inside a non-dir path element
+	errorReply = m_kiofuse_iface.remoteUrl(reply + QStringLiteral("/foo"));
+	errorReply.waitForFinished();
+	QVERIFY(errorReply.isError());
+	QCOMPARE(errorReply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.RemoteURLNotFound"));
 }
 
 void FileOpsTest::testLocalFileOps()
