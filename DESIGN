@@ -45,8 +45,13 @@ these calls: opendir(/) -> readdir(/) -> closedir(/) -> opendir(smb) -> ...
 This is because libfuse has to build an internal tree model for mapping inode
 numbers to path elements.
 With the lowlevel API, lookup is enough: lookup(/, smb) -> lookup(smb, host)...
-This means it's enough to run KIO::stat on the mounted URL itself as all path
-elements are known to be existing directories.
+This can be implemented using KIO::stat instead of a full KIO::listDir, both on
+the initial access and when the node already exists locally, to recheck whether
+the local representation still matches.
+With the high-level API, lookup on existing nodes is not passed to the FS
+implementation if the node is part of the internal tree already. This makes
+it harder (if not infeasible) to react to changes on the remote side, e.g.
+deletes or renames.
 
 Not using inode numbers in the high-level API means that implementing unlink
 properly (i.e. already opened file handles are still valid) is not possible,
@@ -117,6 +122,33 @@ and the path is appended.
 m_lastStatRefresh stores the time when m_stat was updated last. It's updated
 on node construction and by updateNodeFromUDSEntry and queried by the
 awaitAttrRefreshed method.
+
+Mounting a URL
+--------------
+
+Goal of mounting a URL is to make the target file/directory reachable over the
+FUSE filesystem. The first step is to verify that the target actually exists,
+if that is not the case an error is returned without doing any changes.
+
+If the target is reachable, the next step is to find which part of the URL
+(from left to right) is the first accessible one. This is needed as ioslaves
+like tar do not support listing tar:/// and instead need some part of the path
+to return results. This minimum URL is the "origin" and a KIOFuseRemoteDirNode
+with the origin as m_overrideUrl is created, with the parents as plain
+KIOFuseDirNodes.
+
+The local path to this origin node with the path from the origin to the target
+node is returned. Note that at this point this node doesn't actually exist
+locally though, only everything up until (including) the origin. To reach the
+rest, the kernel does lookup operations which trigger KIO::stat and node
+creation for each path component.
+
+Initially, mounting was implemented in a different way, to only require a
+single KIO::stat call for determining accessibility and the target node's
+attributes. All path components except the final one were assumed to be
+traversable directories, but this assumption doesn't hold for symlinks. By
+letting the kernel deal with path traversal, symlinks returned by lookup are
+handled correctly.
 
 Unlinking a node
 ----------------

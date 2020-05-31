@@ -109,7 +109,7 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 		QDBusConnection::sessionBus().send(errorReply);
 		return QString();
 	}
-	kiofusevfs.mountUrl(url, [=] (auto node, int error) {
+	kiofusevfs.mountUrl(url, [=] (auto path, int error) {
 		if(error)
 		{
 			QUrl displayUrl = url;
@@ -122,7 +122,7 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 			return;
 		}
 
-		QString localPath = {m_mountpoint + kiofusevfs.virtualPath(node)};
+		QString localPath = {m_mountpoint + QLatin1Char('/') + path};
 		QDBusConnection::sessionBus().send(message.createReply() << localPath);
 	});
 	return QString();

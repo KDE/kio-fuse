@@ -136,12 +136,6 @@ void FileOpsTest::testLocalPathToRemoteUrl()
 	QVERIFY(!reply.isEmpty());
 	QString calculatedRemoteUrl = m_kiofuse_iface.remoteUrl(reply).value();
 	QCOMPARE(remoteUrl, calculatedRemoteUrl);
-
-	// Path is inside a non-dir path element
-	errorReply = m_kiofuse_iface.remoteUrl(reply + QStringLiteral("/foo"));
-	errorReply.waitForFinished();
-	QVERIFY(errorReply.isError());
-	QCOMPARE(errorReply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.RemoteURLNotFound"));
 }
 
 void FileOpsTest::testLocalFileOps()
@@ -613,6 +607,7 @@ void FileOpsTest::testArchiveOps()
 	QFile innerfile(QStringLiteral("%1/innerarchive/innerfile").arg(reply));
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
+	innerfile.close();
 }
 
 void FileOpsTest::testKioErrorMapping()
@@ -842,15 +837,12 @@ void FileOpsTest::testDirSymlink()
 	// Verify that remoteUrl contains the exact path
 	auto remoteUrlReply = m_kiofuse_iface.remoteUrl(mirrorDir.filePath(QStringLiteral("linktodir/child")));
 	remoteUrlReply.waitForFinished();
-	QEXPECT_FAIL("", "Not implemented", Continue);
 	QVERIFY(!remoteUrlReply.isError());
-	QEXPECT_FAIL("", "Not implemented", Continue);
 	QCOMPARE(QUrl{remoteUrlReply.value()}, QUrl::fromLocalFile(localDir.filePath(QStringLiteral("linktodir/child"))));
 
 	// Verify that the child can be mounted through linktodir
 	auto mountReply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.filePath(QStringLiteral("linktodir/child"))));
 	mountReply.waitForFinished();
-	QEXPECT_FAIL("", "Not implemented", Continue);
 	QVERIFY(!mountReply.isError());
 }
 

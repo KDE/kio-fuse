@@ -49,8 +49,9 @@ public:
 	void stop();
 	/** Designates whether KIOFuse should perform FileJob-based (KIO::open) I/O where possible. */
 	void setUseFileJob(bool useFileJob);
-	/** Runs KIO::stat on url and adds a node to the tree if successful. Calls the callback at the end. */
-	void mountUrl(QUrl url, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
+	/** Runs KIO::stat on url and (if successful) creates an origin node at the lowest possible level.
+	  * Returns the relative path to where url is reachable in the callback. */
+	void mountUrl(QUrl url, std::function<void(const QString&, int)> callback);
 	/** Converts a local path into a remote URL if it is mounted within the VFS */
 	QUrl localPathToRemoteUrl(const QString &localPath) const;
 	/** Returns the path upwards until a root node. */
@@ -145,9 +146,13 @@ private:
 	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void(int error)> callback);
 	/** Invokes callback on error or when a node has been refreshed (if its stat timed out) */
 	void awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, std::function<void(int error)> callback);
+	/** Invokes callback on error on when the child node was fetched and created/updated. */
+	void awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &node, const QString name, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
 
-	/** Returns the override URL for an origin node */
-	QUrl makeOriginUrl(QUrl url);
+	/** Stats url. If successful, returns the path where url + pathElements is reachable in callback.
+	  * If it failed, it moves one part of pathElements to url and tries again, recursively. */
+	void findAndCreateOrigin(QUrl url, QStringList pathElements, std::function<void(const QString&, int)> callback);
+
 	/** If authority of URL is null, adds an empty authority instead */
 	QUrl sanitizeNullAuthority(QUrl url) const;
     
