@@ -163,6 +163,8 @@ private:
 
 	/** Fuse bookkeeping. */
 	struct fuse_session *m_fuseSession = nullptr;
+	/** Allow parsing of options in init() */
+	std::unique_ptr<struct fuse_conn_info_opts, decltype(&free)> m_fuseConnInfoOpts{nullptr, &free};
 	/** Fuse bookkeeping. */
 	std::unique_ptr<QSocketNotifier> m_fuseNotifier;
 

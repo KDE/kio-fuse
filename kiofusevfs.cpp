@@ -161,6 +161,8 @@ bool KIOFuseVFS::start(struct fuse_args &args, const QString& mountpoint)
 	   return false;
 
 	stop();
+
+	m_fuseConnInfoOpts.reset(fuse_parse_conn_info_opts(&args));
 	m_fuseSession = fuse_session_new(&args, &fuse_ll_ops, sizeof(fuse_ll_ops), this);
 
 	if(!m_fuseSession)
@@ -268,7 +270,13 @@ void KIOFuseVFS::setUseFileJob(bool useFileJob)
 
 void KIOFuseVFS::init(void *userdata, fuse_conn_info *conn)
 {
-	Q_UNUSED(userdata);
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(userdata);
+
+	if(that->m_fuseConnInfoOpts)
+	{
+		fuse_apply_conn_info_opts(that->m_fuseConnInfoOpts.get(), conn);
+		that->m_fuseConnInfoOpts.reset();
+	}
 
 	conn->want &= ~FUSE_CAP_HANDLE_KILLPRIV; // Don't care about resetting setuid/setgid flags
 	conn->want &= ~FUSE_CAP_ATOMIC_O_TRUNC; // Use setattr with st_size = 0 instead of open with O_TRUNC
