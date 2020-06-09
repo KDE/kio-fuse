@@ -29,23 +29,6 @@ public:
 
 	virtual ~KIOFuseNode() {}
 
-	enum class NodeType {
-		// Dir types
-		RootNode,
-		ProtocolNode,
-		RemoteDirNode,
-		LastDirType = RemoteDirNode,
-
-		// File types
-		RemoteSymlinkNode,
-		RemoteCacheBasedFileNode,
-		RemoteFileJobBasedFileNode,
-	};
-
-	// By having this as a virtual method instead of a class member
-	// this is "for free" - the vtable ptr is enough
-	virtual NodeType type() const = 0;
-
 	uint64_t m_lookupCount = 0, // This counts how many references to this node the kernel has
 	         m_openCount = 0; // This counts how often the kernel has this node opened
 	fuse_ino_t m_parentIno;
@@ -64,15 +47,11 @@ public:
 class KIOFuseRootNode : public KIOFuseDirNode {
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
-	static const NodeType Type = NodeType::RootNode;
-	NodeType type() const override { return Type; }
 };
 
 class KIOFuseProtocolNode : public KIOFuseDirNode {
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
-	static const NodeType Type = NodeType::ProtocolNode;
-	NodeType type() const override { return Type; }
 };
 
 // Used for automated testing of expiration.
@@ -102,8 +81,6 @@ class KIOFuseRemoteDirNode : public KIOFuseRemoteNodeInfo, public KIOFuseDirNode
 	Q_OBJECT
 public:
 	using KIOFuseDirNode::KIOFuseDirNode;
-	static const NodeType Type = NodeType::RemoteDirNode;
-	NodeType type() const override { return Type; }
 
 	// Whether a dirlist was requested. If true, the signal "gotChildren" will
 	// be emitted on finish.
@@ -119,7 +96,6 @@ Q_SIGNALS:
 };
 
 class KIOFuseRemoteFileNode : public KIOFuseRemoteNodeInfo, public KIOFuseNode {
-	Q_OBJECT
 public:
 	using KIOFuseNode::KIOFuseNode;
 };
@@ -132,8 +108,6 @@ public:
 		if(m_localCache)
 			fclose(m_localCache);
 	}
-	static const NodeType Type = NodeType::RemoteCacheBasedFileNode;
-	NodeType type() const override { return Type; }
 	// Cache information
 	bool cacheIsComplete() { return m_cacheComplete; }
 	FILE *m_localCache = nullptr; // The tmpfile containing data. If nullptr, not requested yet.
@@ -149,19 +123,13 @@ Q_SIGNALS:
 	void cacheFlushed(int error);
 };
 
-
 class KIOFuseRemoteFileJobBasedFileNode : public KIOFuseRemoteFileNode {
-	Q_OBJECT
 public:
 	using KIOFuseRemoteFileNode::KIOFuseRemoteFileNode;
-	static const NodeType Type = NodeType::RemoteFileJobBasedFileNode;
-	NodeType type() const override { return Type; }
 };
 
 class KIOFuseSymLinkNode : public KIOFuseRemoteNodeInfo, public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
-	static const NodeType Type = NodeType::RemoteSymlinkNode;
-	NodeType type() const override { return Type; }
 	QString m_target;
 };

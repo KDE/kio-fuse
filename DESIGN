@@ -67,8 +67,8 @@ Each node knows about its parent and children inode numbers. The two root nodes
 have an invalid inode number (0) set as parent.
 For details on the class hierarchy and their members, read kiofusenode.h.
 
-For carrying out special operations depending on the node type, either the
-node's virtual type method is called or RTTI is queried using dynamic_cast.
+For carrying out special operations depending on the node type, RTTI is used,
+by either querying the typeid or doing a dynamic_cast.
 
 During runtime, the tree can look like this:
 

@@ -313,225 +313,220 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		return;
 	}
 
-	switch(node->type())
+	auto remoteDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(node);
+	auto remoteFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
+
+	if(!remoteDirNode && !remoteFileNode)
 	{
-	default:
 		fuse_reply_err(req, EOPNOTSUPP);
 		return;
-	case KIOFuseNode::NodeType::RemoteDirNode:
-	case KIOFuseNode::NodeType::RemoteCacheBasedFileNode:
-	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
+	}
+
+	if((to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
+	              | FUSE_SET_ATTR_MODE
+	              | FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW
+	              | FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW
+	              | FUSE_SET_ATTR_CTIME))
+	   || (!remoteFileNode && (to_set & FUSE_SET_ATTR_SIZE))) // Unsupported operation requested?
 	{
-		auto remoteFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileNode>(node);
-		if((to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
-		              | FUSE_SET_ATTR_MODE
-		              | FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW
-		              | FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW
-		              | FUSE_SET_ATTR_CTIME))
-		   || (!remoteFileNode && (to_set & FUSE_SET_ATTR_SIZE))) // Unsupported operation requested?
-		{
-			// Don't do anything
-			fuse_reply_err(req, EOPNOTSUPP);
-			return;
-		}
+		// Don't do anything
+		fuse_reply_err(req, EOPNOTSUPP);
+		return;
+	}
 
-		// To have equal atim and mtim
-		struct timespec tsNow;
-		clock_gettime(CLOCK_REALTIME, &tsNow);
+	auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node);
+	auto fileJobBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
 
-		// Can anything be done directly?
+	// To have equal atim and mtim
+	struct timespec tsNow;
+	clock_gettime(CLOCK_REALTIME, &tsNow);
 
-		// This is a hack: Access and change time are not actually passed through to KIO.
-		// The kernel sends request for those if writeback caching is enabled, so it's not
-		// possible to ignore them. So just save them in the local cache.
-		if(to_set & (FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW))
-		{
-			if(to_set & FUSE_SET_ATTR_ATIME_NOW)
-				attr->st_atim = tsNow;
+	// Can anything be done directly?
 
-			node->m_stat.st_atim = attr->st_atim;
-			to_set &= ~(FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW);
-		}
-		if(to_set & FUSE_SET_ATTR_CTIME)
+	// This is a hack: Access and change time are not actually passed through to KIO.
+	// The kernel sends request for those if writeback caching is enabled, so it's not
+	// possible to ignore them. So just save them in the local cache.
+	if(to_set & (FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW))
+	{
+		if(to_set & FUSE_SET_ATTR_ATIME_NOW)
+			attr->st_atim = tsNow;
+
+		node->m_stat.st_atim = attr->st_atim;
+		to_set &= ~(FUSE_SET_ATTR_ATIME | FUSE_SET_ATTR_ATIME_NOW);
+	}
+	if(to_set & FUSE_SET_ATTR_CTIME)
+	{
+		node->m_stat.st_ctim = attr->st_ctim;
+		to_set &= ~FUSE_SET_ATTR_CTIME;
+	}
+	if((to_set & FUSE_SET_ATTR_SIZE) && cacheBasedFileNode)
+	{
+		// Can be done directly if the new size is zero (and there is no get going on).
+		// This is an optimization to avoid fetching the entire file just to ignore its content.
+		if(!cacheBasedFileNode->m_localCache && attr->st_size == 0)
 		{
-			node->m_stat.st_ctim = attr->st_ctim;
-			to_set &= ~FUSE_SET_ATTR_CTIME;
-		}
-		if((to_set & FUSE_SET_ATTR_SIZE) && remoteFileNode->type() == KIOFuseNode::NodeType::RemoteCacheBasedFileNode)
-		{
-			auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(remoteFileNode);
-			// Can be done directly if the new size is zero (and there is no get going on).
-			// This is an optimization to avoid fetching the entire file just to ignore its content.
-			if(!cacheBasedFileNode->m_localCache && attr->st_size == 0)
+			// Just create an empty file
+			cacheBasedFileNode->m_localCache = tmpfile();
+			if(cacheBasedFileNode->m_localCache == nullptr)
 			{
-				// Just create an empty file
-				cacheBasedFileNode->m_localCache = tmpfile();
-				if(cacheBasedFileNode->m_localCache == nullptr)
-				{
-					fuse_reply_err(req, EIO);
-					return;
-				}
-
-				cacheBasedFileNode->m_cacheComplete = true;
-				cacheBasedFileNode->m_cacheSize = cacheBasedFileNode->m_stat.st_size = 0;
-				cacheBasedFileNode->m_stat.st_mtim = cacheBasedFileNode->m_stat.st_ctim = tsNow;
-				that->markCacheDirty(cacheBasedFileNode);
-
-				to_set &= ~FUSE_SET_ATTR_SIZE; // Done already!
+				fuse_reply_err(req, EIO);
+				return;
 			}
+
+			cacheBasedFileNode->m_cacheComplete = true;
+			cacheBasedFileNode->m_cacheSize = cacheBasedFileNode->m_stat.st_size = 0;
+			cacheBasedFileNode->m_stat.st_mtim = cacheBasedFileNode->m_stat.st_ctim = tsNow;
+			that->markCacheDirty(cacheBasedFileNode);
+
+			to_set &= ~FUSE_SET_ATTR_SIZE; // Done already!
 		}
+	}
 
-		if(!to_set) // Done already?
+	if(!to_set) // Done already?
+	{
+		replyAttr(req, node);
+		return;
+	}
+
+	// Everything else has to be done async - but there might be multiple ops that
+	// need to be coordinated. If an operation completes and clearing its value(s)
+	// in to_set_remaining leaves a zero value, it replies with fuse_reply_attr if
+	// error is zero and fuse_reply_err(error) otherwise.
+	struct SetattrState {
+		int to_set_remaining;
+		int error;
+		struct stat value;
+	};
+
+	auto sharedState = std::make_shared<SetattrState>((SetattrState){to_set, 0, *attr});
+
+	auto markOperationCompleted = [=] (int to_set_done) {
+		sharedState->to_set_remaining &= ~to_set_done;
+		if(!sharedState->to_set_remaining)
 		{
-			replyAttr(req, node);
-			return;
-		}
-
-		// Everything else has to be done async - but there might be multiple ops that
-		// need to be coordinated. If an operation completes and clearing its value(s)
-		// in to_set_remaining leaves a zero value, it replies with fuse_reply_attr if
-		// error is zero and fuse_reply_err(error) otherwise.
-		struct SetattrState {
-			int to_set_remaining;
-			int error;
-			struct stat value;
-		};
-
-		auto sharedState = std::make_shared<SetattrState>((SetattrState){to_set, 0, *attr});
-
-		auto markOperationCompleted = [=] (int to_set_done){
-			sharedState->to_set_remaining &= ~to_set_done;
-			if(!sharedState->to_set_remaining)
-			{
-				if(sharedState->error)
-				{
-					fuse_reply_err(req, sharedState->error);
-				}
-				else
-					replyAttr(req, node);
-			}
-		};
-
-		if((to_set & FUSE_SET_ATTR_SIZE) && remoteFileNode->type() == KIOFuseNode::NodeType::RemoteCacheBasedFileNode)
-		{
-			auto cacheBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(remoteFileNode);
-			// Have to wait until the cache is complete to truncate.
-			// Waiting until all bytes up to the truncation point are available won't work,
-			// as the fetch function would just overwrite the cache.
-			that->awaitCacheComplete(cacheBasedFileNode, [=] (int error) {
-				if(error)
-					sharedState->error = error;
-				else // Cache complete!
-				{
-					// Truncate the cache file
-					if(fflush(cacheBasedFileNode->m_localCache) != 0
-					    || ftruncate(fileno(cacheBasedFileNode->m_localCache), sharedState->value.st_size) == -1)
-						sharedState->error = errno;
-					else
-					{
-						cacheBasedFileNode->m_cacheSize = cacheBasedFileNode->m_stat.st_size = sharedState->value.st_size;
-						cacheBasedFileNode->m_stat.st_mtim = cacheBasedFileNode->m_stat.st_ctim = tsNow;
-						that->markCacheDirty(cacheBasedFileNode);
-					}
-				}
-				markOperationCompleted(FUSE_SET_ATTR_SIZE);
-			});
-		}
-		else if ((to_set & FUSE_SET_ATTR_SIZE) && remoteFileNode->type() == KIOFuseNode::NodeType::RemoteFileJobBasedFileNode)
-		{
-			auto fileJobBasedFileNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(remoteFileNode);
-			auto *fileJob = KIO::open(that->remoteUrl(fileJobBasedFileNode), QIODevice::ReadWrite);
-			connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
-				// All errors come through this signal, so error-handling is done here
-				if(job->error())
-				{
-					sharedState->error = kioErrorToFuseError(job->error());
-					markOperationCompleted(FUSE_SET_ATTR_SIZE);
-				}
-			});
-			connect(fileJob, &KIO::FileJob::open, [=] {
-				fileJob->truncate(sharedState->value.st_size);
-				connect(fileJob, &KIO::FileJob::truncated, [=] {
-					fileJob->close();
-					connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
-						fileJobBasedFileNode->m_stat.st_size = sharedState->value.st_size;
-						markOperationCompleted(FUSE_SET_ATTR_SIZE);
-					});
-				});
-			});
-		}
-
-		if(to_set & (FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID))
-		{
-			// KIO uses strings for passing user and group, but the VFS uses IDs exclusively.
-			// So this needs a roundtrip.
-
-			uid_t newUid = (to_set & FUSE_SET_ATTR_UID) ? attr->st_uid : node->m_stat.st_uid;
-			gid_t newGid = (to_set & FUSE_SET_ATTR_GID) ? attr->st_gid : node->m_stat.st_gid;
-			auto *pw = getpwuid(newUid);
-			auto *gr = getgrgid(newGid);
-
-			if(!pw || !gr)
-			{
-				sharedState->error = ENOENT;
-				markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
-			}
+			if(sharedState->error)
+				fuse_reply_err(req, sharedState->error);
 			else
-			{
-				QString newOwner = QString::fromUtf8(pw->pw_name),
-				        newGroup = QString::fromUtf8(gr->gr_name);
-
-				auto *job = KIO::chown(that->remoteUrl(node), newOwner, newGroup);
-				that->connect(job, &KIO::SimpleJob::finished, [=] {
-					if(job->error())
-						sharedState->error = kioErrorToFuseError(job->error());
-					else
-					{
-						node->m_stat.st_uid = newUid;
-						node->m_stat.st_gid = newGid;
-						node->m_stat.st_ctim = tsNow;
-					}
-
-					markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
-				});
-			}
+				replyAttr(req, node);
 		}
+	};
 
-		if(to_set & (FUSE_SET_ATTR_MODE))
+	if((to_set & FUSE_SET_ATTR_SIZE) && cacheBasedFileNode)
+	{
+		// Have to wait until the cache is complete to truncate.
+		// Waiting until all bytes up to the truncation point are available won't work,
+		// as the fetch function would just overwrite the cache.
+		that->awaitCacheComplete(cacheBasedFileNode, [=] (int error) {
+			if(error)
+				sharedState->error = error;
+			else // Cache complete!
+			{
+				// Truncate the cache file
+				if(fflush(cacheBasedFileNode->m_localCache) != 0
+				    || ftruncate(fileno(cacheBasedFileNode->m_localCache), sharedState->value.st_size) == -1)
+					sharedState->error = errno;
+				else
+				{
+					cacheBasedFileNode->m_cacheSize = cacheBasedFileNode->m_stat.st_size = sharedState->value.st_size;
+					cacheBasedFileNode->m_stat.st_mtim = cacheBasedFileNode->m_stat.st_ctim = tsNow;
+					that->markCacheDirty(cacheBasedFileNode);
+				}
+			}
+			markOperationCompleted(FUSE_SET_ATTR_SIZE);
+		});
+	}
+	else if ((to_set & FUSE_SET_ATTR_SIZE) && fileJobBasedFileNode)
+	{
+		auto *fileJob = KIO::open(that->remoteUrl(fileJobBasedFileNode), QIODevice::ReadWrite);
+		connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
+			// All errors come through this signal, so error-handling is done here
+			if(job->error())
+			{
+				sharedState->error = kioErrorToFuseError(job->error());
+				markOperationCompleted(FUSE_SET_ATTR_SIZE);
+			}
+		});
+		connect(fileJob, &KIO::FileJob::open, [=] {
+			fileJob->truncate(sharedState->value.st_size);
+			connect(fileJob, &KIO::FileJob::truncated, [=] {
+				fileJob->close();
+				connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJobBasedFileNode->m_stat.st_size = sharedState->value.st_size;
+					markOperationCompleted(FUSE_SET_ATTR_SIZE);
+				});
+			});
+		});
+	}
+
+	if(to_set & (FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID))
+	{
+		// KIO uses strings for passing user and group, but the VFS uses IDs exclusively.
+		// So this needs a roundtrip.
+
+		uid_t newUid = (to_set & FUSE_SET_ATTR_UID) ? attr->st_uid : node->m_stat.st_uid;
+		gid_t newGid = (to_set & FUSE_SET_ATTR_GID) ? attr->st_gid : node->m_stat.st_gid;
+		auto *pw = getpwuid(newUid);
+		auto *gr = getgrgid(newGid);
+
+		if(!pw || !gr)
 		{
-			auto newMode = attr->st_mode & ~S_IFMT;
-			auto *job = KIO::chmod(that->remoteUrl(node), newMode);
+			sharedState->error = ENOENT;
+			markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
+		}
+		else
+		{
+			QString newOwner = QString::fromUtf8(pw->pw_name),
+			        newGroup = QString::fromUtf8(gr->gr_name);
+
+			auto *job = KIO::chown(that->remoteUrl(node), newOwner, newGroup);
 			that->connect(job, &KIO::SimpleJob::finished, [=] {
 				if(job->error())
 					sharedState->error = kioErrorToFuseError(job->error());
 				else
 				{
-					node->m_stat.st_mode = (node->m_stat.st_mode & S_IFMT) | newMode;
+					node->m_stat.st_uid = newUid;
+					node->m_stat.st_gid = newGid;
 					node->m_stat.st_ctim = tsNow;
 				}
-				
-				markOperationCompleted(FUSE_SET_ATTR_MODE);
-			});
-		}
 
-		if(to_set & (FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW))
-		{
-			if(to_set & FUSE_SET_ATTR_MTIME_NOW)
-				sharedState->value.st_mtim = tsNow;
-
-			auto time = QDateTime::fromMSecsSinceEpoch(qint64(sharedState->value.st_mtim.tv_sec) * 1000
-			                                           + sharedState->value.st_mtim.tv_nsec / 1000000);
-			auto *job = KIO::setModificationTime(that->remoteUrl(node), time);
-			that->connect(job, &KIO::SimpleJob::finished, [=] {
-				if(job->error())
-					sharedState->error = kioErrorToFuseError(job->error());
-				else // This is not quite correct, as KIO rounded the value down to a second
-					node->m_stat.st_mtim = sharedState->value.st_mtim;
-
-				markOperationCompleted(FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW);
+				markOperationCompleted(FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID);
 			});
 		}
 	}
+
+	if(to_set & (FUSE_SET_ATTR_MODE))
+	{
+		auto newMode = attr->st_mode & ~S_IFMT;
+		auto *job = KIO::chmod(that->remoteUrl(node), newMode);
+		that->connect(job, &KIO::SimpleJob::finished, [=] {
+			if(job->error())
+				sharedState->error = kioErrorToFuseError(job->error());
+			else
+			{
+				node->m_stat.st_mode = (node->m_stat.st_mode & S_IFMT) | newMode;
+				node->m_stat.st_ctim = tsNow;
+			}
+
+			markOperationCompleted(FUSE_SET_ATTR_MODE);
+		});
+	}
+
+	if(to_set & (FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW))
+	{
+		if(to_set & FUSE_SET_ATTR_MTIME_NOW)
+			sharedState->value.st_mtim = tsNow;
+
+		auto time = QDateTime::fromMSecsSinceEpoch(qint64(sharedState->value.st_mtim.tv_sec) * 1000
+		                                           + sharedState->value.st_mtim.tv_nsec / 1000000);
+		auto *job = KIO::setModificationTime(that->remoteUrl(node), time);
+		that->connect(job, &KIO::SimpleJob::finished, [=] {
+			if(job->error())
+				sharedState->error = kioErrorToFuseError(job->error());
+			else // This is not quite correct, as KIO rounded the value down to a second
+				node->m_stat.st_mtim = sharedState->value.st_mtim;
+
+			markOperationCompleted(FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW);
+		});
 	}
 }
 
@@ -921,21 +916,15 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 		return;
 	}
 
-	if(node->type() <= KIOFuseNode::NodeType::LastDirType)
+	if(std::dynamic_pointer_cast<KIOFuseDirNode>(node))
 	{
 		fuse_reply_err(req, EISDIR);
 		return;
 	}
 
-	switch(node->type())
-	{
-	default:
-		fuse_reply_err(req, EIO);
-		return;
-	case KIOFuseNode::NodeType::RemoteCacheBasedFileNode:
+	if(auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
 	{
 		qDebug(KIOFUSE_LOG) << "Reading" << size << "byte(s) at offset" << off << "of (cache-based) node" << node->m_nodeName;
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node);
 		that->awaitBytesAvailable(remoteNode, off + size, [=] (int error) {
 			if(error != 0 && error != ESPIPE)
 			{
@@ -964,11 +953,11 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 			buf.buf[0].pos = off;
 
 			fuse_reply_data(req, &buf, fuse_buf_copy_flags{});
-
 		});
-		break;
+
+		return;
 	}
-	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
+	else if(auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node))
 	{
 		qDebug(KIOFUSE_LOG) << "Reading" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
 
@@ -978,7 +967,6 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 			return;
 		}
 
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
 		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadOnly);
 		connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
 			// All errors come through this signal, so error-handling is done here
@@ -1024,9 +1012,11 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 				});
 			});
 		});
-		break;
+
+		return;
 	}
-	}
+
+	fuse_reply_err(req, EIO);
 }
 
 void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, fuse_file_info *fi)
@@ -1040,22 +1030,16 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 		return;
 	}
 
-	if(node->type() <= KIOFuseNode::NodeType::LastDirType)
+	if(std::dynamic_pointer_cast<KIOFuseDirNode>(node))
 	{
 		fuse_reply_err(req, EISDIR);
 		return;
 	}
 
-	switch(node->type())
-	{
-	default:
-		fuse_reply_err(req, EIO);
-		return;
-	case KIOFuseNode::NodeType::RemoteCacheBasedFileNode:
+	if(auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node))
 	{
 		qDebug(KIOFUSE_LOG) << "Writing" << size << "byte(s) at offset" << off << "of (cache-based) node" << node->m_nodeName;
 		QByteArray data(buf, size); // Copy data
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteCacheBasedFileNode>(node);
 		// fi lives on the caller's stack make a copy.
 		auto cacheBasedWriteCallback = [=, fi_flags=fi->flags] (int error) {
 			if(error && error != ESPIPE)
@@ -1091,9 +1075,10 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 			that->awaitCacheComplete(remoteNode, cacheBasedWriteCallback);
 		else
 			that->awaitBytesAvailable(remoteNode, off + size, cacheBasedWriteCallback);
-		break;
+
+		return;
 	}
-	case KIOFuseNode::NodeType::RemoteFileJobBasedFileNode:
+	else if(auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node))
 	{
 		qDebug(KIOFUSE_LOG) << "Writing" << size << "byte(s) at offset" << off << "of (FileJob-based) node" << node->m_nodeName;
 
@@ -1104,7 +1089,6 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 		}
 
 		QByteArray data(buf, size); // Copy data
-		auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteFileJobBasedFileNode>(node);
 		auto *fileJob = KIO::open(that->remoteUrl(remoteNode), QIODevice::ReadWrite);
 		connect(fileJob, &KIO::FileJob::result, [=] (auto *job) {
 			// All errors come through this signal, so error-handling is done here
@@ -1145,9 +1129,11 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 				});
 			});
 		});
-		break;
+
+		return;
 	}
-	}
+
+	fuse_reply_err(req, EIO);
 }
 
 void KIOFuseVFS::flush(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
@@ -1281,7 +1267,8 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		return;
 	}
 
-	if(parentNode->type() > KIOFuseNode::NodeType::LastDirType)
+	auto parentDirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(parentNode);
+	if(!parentDirNode)
 	{
 		fuse_reply_err(req, ENOTDIR);
 		return;
@@ -1289,17 +1276,17 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 
 	QString nodeName = QString::fromUtf8(name);
 
-	if(auto child = that->nodeByName(parentNode, nodeName)) // Part of the tree?
+	if(auto child = that->nodeByName(parentDirNode, nodeName)) // Part of the tree?
 	{
 		return that->awaitAttrRefreshed(child, [=](int error) {
 			Q_UNUSED(error);
 			// Lookup again, node might've been replaced or deleted
-			auto child = that->nodeByName(parentNode, nodeName);
+			auto child = that->nodeByName(parentDirNode, nodeName);
 			that->replyEntry(req, child);
 		});
 	}
 
-	QUrl url = that->remoteUrl(parentNode);
+	QUrl url = that->remoteUrl(parentDirNode);
 	if(url.isEmpty())
 	{
 		// Directory not remote, so definitely does not exist
@@ -1655,7 +1642,11 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::updateNodeFromUDSEntry(const std::share
 		return node;
 	}
 
-	if (newNode->type() != node->type())
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas" // GCC does not know the diagnostic below and warns m(
+#pragma GCC diagnostic ignored "-Wpotentially-evaluated-expression"
+	if (typeid(*newNode.get()) != typeid(*node.get()))
+#pragma GCC diagnostic pop
 	{
 		if(node->m_parentIno != KIOFuseIno::DeletedRoot)
 		{
