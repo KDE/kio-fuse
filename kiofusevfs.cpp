@@ -142,11 +142,11 @@ KIOFuseVFS::KIOFuseVFS(QObject *parent)
 	fillStatForFile(attr);
 	attr.st_mode = S_IFDIR | 0755;
 
-	auto root = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
+	auto root = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Invalid, QString(), attr);
 	insertNode(root, KIOFuseIno::Root);
 	incrementLookupCount(root, 1); // Implicitly referenced by mounting
 
-	auto deletedRoot = std::make_shared<KIOFuseRootNode>(KIOFuseIno::Invalid, QString(), attr);
+	auto deletedRoot = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Invalid, QString(), attr);
 	insertNode(deletedRoot, KIOFuseIno::DeletedRoot);
 }
 
@@ -1952,7 +1952,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const std::shared_ptr<KI
 				fillStatForFile(attr);
 				attr.st_mode = S_IFDIR | 0755;
 
-				protocolNode = std::make_shared<KIOFuseProtocolNode>(KIOFuseIno::Root, url.scheme(), attr);
+				protocolNode = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Root, url.scheme(), attr);
 				insertNode(protocolNode);
 			}
 

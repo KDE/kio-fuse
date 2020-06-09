@@ -44,16 +44,6 @@ public:
 	std::vector<fuse_ino_t> m_childrenInos;
 };
 
-class KIOFuseRootNode : public KIOFuseDirNode {
-public:
-	using KIOFuseDirNode::KIOFuseDirNode;
-};
-
-class KIOFuseProtocolNode : public KIOFuseDirNode {
-public:
-	using KIOFuseDirNode::KIOFuseDirNode;
-};
-
 // Used for automated testing of expiration.
 // Set by KIOFuseServicePrivate::forceNodeTimeout.
 extern std::chrono::steady_clock::time_point g_timeoutEpoch;

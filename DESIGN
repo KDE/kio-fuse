@@ -73,10 +73,10 @@ by either querying the typeid or doing a dynamic_cast.
 During runtime, the tree can look like this:
 
 "" (ino: 1)
-KIOFuseRootNode
+KIOFuseDirNode
     |
     |        "smb"
-    |------> KIOFuseProtocolNode
+    |------> KIOFuseDirNode
     |           \
     |            \        "user@fileserver01"       "a file"
     |             ------> KIOFuseRemoteDirNode -----> KIOFuseRemoteFileNode
@@ -89,14 +89,14 @@ KIOFuseRootNode
     |                                         ------> KIOFuseRemoteFileNode
     |
     |       "sftp"
-    ------> KIOFuseProtocolNode
+    ------> KIOFuseDirNode
             \
              \        "user@someserver"         "a file"
               ------> KIOFuseRemoteDirNode -----> KIOFuseRemoteFileNode
                       "user:pass@someserver"
 
 "" (ino: 2)           "deleted file"
-KIOFuseRootNode ----> KIOFuseRemoteFileNode
+KIOFuseDirNode ----> KIOFuseRemoteFileNode
 
 The root node with inode number 1 represents the root of the VFS.
 Only files below are visible in the VFS hierarchy.
