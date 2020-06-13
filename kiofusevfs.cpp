@@ -133,9 +133,13 @@ static bool operator <(const struct timespec &a, const struct timespec &b)
 	return (a.tv_sec == b.tv_sec) ? (a.tv_nsec < b.tv_nsec) : (a.tv_sec < b.tv_sec);
 }
 
-/** Returns url with members of pathElements appended to its path. */
+/** Returns url with members of pathElements appended to its path,
+  * unless url is empty, then it's returned as-is. */
 static QUrl addPathElements(QUrl url, QStringList pathElements)
 {
+	if(url.isEmpty())
+		return url;
+
 	if(!url.path().endsWith(QLatin1Char('/')) && !pathElements.isEmpty())
 		pathElements.prepend({});
 
@@ -296,7 +300,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const QString &, int)> c
 		}
 
 		// The file exists, try to mount it
-		QUrl originUrl = sanitizeNullAuthority(url);
+		QUrl originUrl = url;
 		if(originUrl.path().startsWith(QLatin1Char('/')))
 			originUrl.setPath(QStringLiteral("/"));
 		else
@@ -323,13 +327,11 @@ void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::fu
 		{
 			qDebug(KIOFUSE_LOG) << statJob->errorString();
 
-			if(pathElements.isEmpty())
-			{
-				qDebug(KIOFUSE_LOG) << "Creating origin failed";
-				return callback({}, kioErrorToFuseError(statJob->error()));
-			}
+			if(!pathElements.isEmpty())
+				return findAndCreateOrigin(addPathElements(url, pathElements.mid(0, 1)), pathElements.mid(1), callback);
 
-			return findAndCreateOrigin(addPathElements(url, pathElements.mid(0, 1)), pathElements.mid(1), callback);
+			qDebug(KIOFUSE_LOG) << "Creating origin failed";
+			return callback({}, kioErrorToFuseError(statJob->error()));
 		}
 
 		qDebug(KIOFUSE_LOG) << "Origin found at" << urlWithoutPassword;
@@ -701,9 +703,8 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
-	auto url = that->remoteUrl(node);
 	auto nameStr = QString::fromUtf8(name);
-	url.setPath(url.path() + QLatin1Char('/') + nameStr);
+	auto url = addPathElements(that->remoteUrl(node), {nameStr});
 	auto *job = KIO::put(url, mode & ~S_IFMT);
 	// Not connecting to the dataReq signal at all results in an empty file
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
@@ -739,9 +740,8 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
-	auto url = that->remoteUrl(node);
 	auto namestr = QString::fromUtf8(name);
-	url.setPath(url.path() + QLatin1Char('/') + namestr);
+	auto url = addPathElements(that->remoteUrl(node), {namestr});
 	auto *job = KIO::mkdir(url, mode & ~S_IFMT);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
@@ -855,9 +855,8 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 		return;
 	}
 
-	auto url = that->remoteUrl(node);
 	auto namestr = QString::fromUtf8(name);
-	url.setPath(url.path() + QLatin1Char('/') + namestr);
+	auto url = addPathElements(that->remoteUrl(node), {namestr});
 	auto *job = KIO::symlink(QString::fromUtf8(link), url);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
@@ -945,10 +944,8 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 		}
 	}
 
-	auto url = that->remoteUrl(remoteParent),
-	     newUrl = that->remoteUrl(remoteNewParent);
-	url.setPath(url.path() + QLatin1Char('/') + QString::fromUtf8(name));
-	newUrl.setPath(newUrl.path() + QLatin1Char('/') + newNameStr);
+	auto url = addPathElements(that->remoteUrl(remoteParent), {QString::fromUtf8(name)}),
+	     newUrl = addPathElements(that->remoteUrl(remoteNewParent), {newNameStr});
 
 	auto *job = KIO::rename(url, newUrl, (flags & RENAME_NOREPLACE) ? KIO::DefaultFlags : KIO::Overwrite);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
@@ -1526,18 +1523,6 @@ QUrl KIOFuseVFS::localPathToRemoteUrl(const QString& localPath) const
 	return {};
 }
 
-QUrl KIOFuseVFS::sanitizeNullAuthority(QUrl url) const
-{
-	// Workaround to allow url with scheme "file"
-	// to have a path that starts with "//"
-	// Without this patch...
-	// file: + //tmp = invalid URL
-	// file:// + //tmp = file////tmp
-	if(url.authority().isNull())
-		url.setAuthority(QStringLiteral(""));
-	return url;
-}
-
 QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 {
 	QStringList path;
@@ -1545,11 +1530,8 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 	{
 		auto remoteDirNode = dynamic_cast<const KIOFuseRemoteNodeInfo*>(currentNode);
 		if(remoteDirNode && !remoteDirNode->m_overrideUrl.isEmpty())
-		{
 			// Origin found - add path and return
-			QUrl url = sanitizeNullAuthority(remoteDirNode->m_overrideUrl);
-			return addPathElements(url, path);
-		}
+			return addPathElements(remoteDirNode->m_overrideUrl, path);
 
 		path.prepend(currentNode->m_nodeName);
 	}
@@ -2195,7 +2177,7 @@ void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, st
 
 void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &parent, const QString name, std::function<void (const std::shared_ptr<KIOFuseNode> &, int)> callback)
 {
-	auto url = remoteUrl(parent);
+	auto url = addPathElements(remoteUrl(parent), {name});
 	if(url.isEmpty()) // Not remote?
 	{
 		if(auto node = nodeByName(parent, name))
@@ -2203,8 +2185,6 @@ void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &
 		else
 			return callback({}, ENOENT);
 	}
-
-	url.setPath(url.path() + QLatin1Char('/') + name);
 
 	QUrl urlWithoutPassword = url;
 	urlWithoutPassword.setPassword({});

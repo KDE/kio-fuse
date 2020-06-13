@@ -152,9 +152,6 @@ private:
 	/** Stats url. If successful, returns the path where url + pathElements is reachable in callback.
 	  * If it failed, it moves one part of pathElements to url and tries again, recursively. */
 	void findAndCreateOrigin(QUrl url, QStringList pathElements, std::function<void(const QString&, int)> callback);
-
-	/** If authority of URL is null, adds an empty authority instead */
-	QUrl sanitizeNullAuthority(QUrl url) const;
     
 	/** Returns the corresponding FUSE error to the given KIO Job error */
 	static int kioErrorToFuseError(const int kioError);
