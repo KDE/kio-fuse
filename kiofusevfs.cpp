@@ -133,6 +133,13 @@ static bool operator <(const struct timespec &a, const struct timespec &b)
 	return (a.tv_sec == b.tv_sec) ? (a.tv_nsec < b.tv_nsec) : (a.tv_sec < b.tv_sec);
 }
 
+/** Returns whether the given name is valid for a file. */
+static bool isValidFilename(const QString &name)
+{
+	return !name.isEmpty() && !name.contains(QLatin1Char('/'))
+	   && name != QStringLiteral(".") && name != QStringLiteral("..");
+}
+
 /** Returns url with members of pathElements appended to its path,
   * unless url is empty, then it's returned as-is. */
 static QUrl addPathElements(QUrl url, QStringList pathElements)
@@ -345,6 +352,10 @@ void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::fu
 		//         ^                   V
 		// "ftp://user@host/dir/ectory/"
 		targetPathComponents.removeAll({});
+
+		if(std::any_of(targetPathComponents.begin(), targetPathComponents.end(),
+		               [](const QString &s) { return !isValidFilename(s); }))
+			return callback({}, EINVAL); // Invalid path (contains '.' or '..')
 
 		auto currentNode = std::dynamic_pointer_cast<KIOFuseDirNode>(nodeForIno(KIOFuseIno::Root));
 
@@ -1640,8 +1651,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	QString name = nameOverride;
 	if(name.isEmpty())
 		name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
-	if(name.isEmpty() || name.contains(QLatin1Char('/'))
-	   || name == QStringLiteral(".") || name == QStringLiteral(".."))
+	if(!isValidFilename(name))
 		return nullptr; // Reject invalid names
 
 	// Create a stat struct with default values
