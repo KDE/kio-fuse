@@ -175,9 +175,9 @@ void KIOFuseVFS::operation(fuse_req_t req, fuse_ino_t inode, ...)
 	if(!node) complain and return;
 
 	auto job = KIO::operation(that->remoteUrl(node), ...);
-	connect(job, &finished, [=](int error) {
-		if(error)
-			fuse_reply_err(req, EIO);
+	connect(job, &finished, [=] {
+	    if(job->error())
+		    fuse_reply_err(req, kioErrorToFuseError(job->error()));
 		else
 		{
 			that->doOperation(node);
@@ -199,7 +199,7 @@ Node attributes
 For every node in the VFS, the full struct stat is already available when
 inserting it into the tree. This happens when mounting a URL (uses KIO::stat)
 and when requesting the children of a URL (using KIO::listDir with details).
-The same is true of a symlink's target.
+The same is true of the symlink's target path.
 
 As a result, getattr and readlink are non-blocking if the node's attributes
 have not timed out.
