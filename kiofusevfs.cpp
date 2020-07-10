@@ -367,7 +367,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		{
 			// Just create an empty file
 			cacheBasedFileNode->m_localCache = tmpfile();
-			if(cacheBasedFileNode->m_localCache == nullptr)
+			if(!cacheBasedFileNode->m_localCache)
 			{
 				fuse_reply_err(req, EIO);
 				return;
