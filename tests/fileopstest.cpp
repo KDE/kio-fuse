@@ -44,6 +44,7 @@ private Q_SLOTS:
 	void testSymlinkRefresh();
 	void testTypeRefresh();
 	void testDirSymlink();
+	void testSymlinkRewrite();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -51,6 +52,10 @@ private Q_SLOTS:
 private:
 	QDateTime roundDownToSecond(QDateTime dt);
 	bool forceNodeTimeout();
+	/** Unlike QFileInfo::symLinkTarget, which returns absolute paths only,
+	  * this returns the raw link content. On failure or truncation, a null
+	  * QString is returned instead. */
+	QString readlink(QString symlink);
 
 	org::kde::KIOFuse::VFS m_kiofuse_iface{QStringLiteral("org.kde.KIOFuse"),
 		                                   QStringLiteral("/org/kde/KIOFuse"),
@@ -762,16 +767,16 @@ void FileOpsTest::testSymlinkRefresh()
 	QVERIFY(mirrorDir.exists());
 
 	// Create a symlink
-	QCOMPARE(symlink("/oldtarget", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
-	QCOMPARE(QFile::symLinkTarget(mirrorDir.filePath(QStringLiteral("symlink"))), QStringLiteral("/oldtarget"));
+	QCOMPARE(symlink("oldtarget", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
+	QCOMPARE(readlink(mirrorDir.filePath(QStringLiteral("symlink"))), QStringLiteral("oldtarget"));
 
 	// Change the symlink
 	QVERIFY(QFile::remove(localDir.filePath((QStringLiteral("symlink")))));
-	QCOMPARE(symlink("/newtarget", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
+	QCOMPARE(symlink("newtarget", localDir.filePath(QStringLiteral("symlink")).toUtf8().data()), 0);
 
 	QVERIFY(forceNodeTimeout());
 
-	QCOMPARE(QFile::symLinkTarget(mirrorDir.filePath(QStringLiteral("symlink"))), QStringLiteral("/newtarget"));
+	QCOMPARE(readlink(mirrorDir.filePath(QStringLiteral("symlink"))), QStringLiteral("newtarget"));
 }
 
 void FileOpsTest::testTypeRefresh()
@@ -828,6 +833,9 @@ void FileOpsTest::testDirSymlink()
 	QVERIFY(mirrorDir.mkpath(QStringLiteral("realdir/child")));
 	QCOMPARE(symlink("realdir/../realdir",
 	                 qPrintable(mirrorDir.filePath(QStringLiteral("linktodir")))), 0);
+	// Verify that the link is saved as-is
+	QCOMPARE(readlink(mirrorDir.filePath(QStringLiteral("linktodir"))),
+	         QStringLiteral("realdir/../realdir"));
 
 	// Verify that it was correctly created everywhere
 	QVERIFY(mirrorDir.exists(QStringLiteral("linktodir/child")));
@@ -844,6 +852,55 @@ void FileOpsTest::testDirSymlink()
 	auto mountReply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.filePath(QStringLiteral("linktodir/child"))));
 	mountReply.waitForFinished();
 	QVERIFY(!mountReply.isError());
+}
+
+void FileOpsTest::testSymlinkRewrite()
+{
+	QTemporaryDir localTmpDir;
+	QVERIFY(localTmpDir.isValid());
+	QDir localDir(localTmpDir.path());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// Create a symlink /mnt/file/.../symlink -> /mnt/file/.../somedir/../somefile.
+	// This is to test that even if the target does not exist and is some convoluted
+	// path, it is still rewritten correctly.
+	QCOMPARE(symlink(qPrintable(mirrorDir.filePath(QStringLiteral("somedir/../somefile"))),
+	                 qPrintable(mirrorDir.filePath(QStringLiteral("symlink")))), 0);
+	// Verify that it can be read back as-is on the mount
+	QCOMPARE(readlink(mirrorDir.filePath(QStringLiteral("symlink"))),
+	         mirrorDir.filePath(QStringLiteral("somedir/../somefile")));
+
+	// Verify that it's absolute on the local side
+	QCOMPARE(readlink(localDir.filePath(QStringLiteral("symlink"))),
+	         localDir.filePath(QStringLiteral("somedir/../somefile")));
+
+	// Mount something with a different origin
+	QString outerpath = QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz"));
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("tar://%1/outerarchive/").arg(outerpath)).value();
+	QVERIFY(!reply.isEmpty());
+	QDir archiveDir(reply);
+	QVERIFY(archiveDir.exists());
+
+	// Create a symlink /mnt/file/.../symlink -> /mnt/tar/.../outerarchive/somewhere
+	// which can't be rewritten properly
+	QCOMPARE(symlink(qPrintable(archiveDir.filePath(QStringLiteral("somewhere"))),
+	                 qPrintable(mirrorDir.filePath(QStringLiteral("symlink2")))), 0);
+	// Verify that it didn't get rewritten during write
+	QCOMPARE(readlink(localDir.filePath(QStringLiteral("symlink2"))),
+	         archiveDir.filePath(QStringLiteral("somewhere")));
+	// If rewriting fails, it'll keep it as-is, but the next read will rewrite
+	// it in the other direction again, i.e. /mnt/file/mnt/tar/...
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(archiveDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QCOMPARE(readlink(mirrorDir.filePath(QStringLiteral("symlink2"))),
+	         QDir(reply).filePath(QStringLiteral("somewhere")));
 }
 
 #ifdef WASTE_DISK_SPACE
@@ -894,6 +951,16 @@ bool FileOpsTest::forceNodeTimeout()
 	auto reply = m_kiofuseprivate_iface.forceNodeTimeout();
 	reply.waitForFinished();
 	return !reply.isError();
+}
+
+QString FileOpsTest::readlink(QString symlink)
+{
+	char buf[PATH_MAX];
+	int len = ::readlink(qPrintable(symlink), buf, sizeof(buf));
+	if(len < 0 || len >= int(sizeof(buf))) // Failed or truncated?
+		return {}; // Return a null QString
+
+	return QString::fromLocal8Bit(buf, len);
 }
 
 QTEST_GUILESS_MAIN(FileOpsTest)

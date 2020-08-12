@@ -19,6 +19,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QDir>
 #include <QVersionNumber>
 
 #include <KIO/ListJob>
@@ -185,12 +186,15 @@ bool KIOFuseVFS::start(struct fuse_args &args, const QString& mountpoint)
 
 	m_fuseConnInfoOpts.reset(fuse_parse_conn_info_opts(&args));
 	m_fuseSession = fuse_session_new(&args, &fuse_ll_ops, sizeof(fuse_ll_ops), this);
+	m_mountpoint = QDir::cleanPath(mountpoint); // Remove redundant slashes
+	if(!m_mountpoint.endsWith(QLatin1Char('/')))
+		m_mountpoint += QLatin1Char('/');
 
 	if(!m_fuseSession)
 		return false;
 
 	if(!setupSignalHandlers()
-	   || fuse_session_mount(m_fuseSession, mountpoint.toUtf8().data()) != 0)
+	   || fuse_session_mount(m_fuseSession, m_mountpoint.toUtf8().data()) != 0)
 	{
 		stop();
 		return false;
@@ -307,17 +311,26 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const QString &, int)> c
 		}
 
 		// The file exists, try to mount it
-		QUrl originUrl = url;
-		if(originUrl.path().startsWith(QLatin1Char('/')))
-			originUrl.setPath(QStringLiteral("/"));
-		else
-			originUrl.setPath({});
-
 		auto pathElements = url.path().split(QLatin1Char('/'));
 		pathElements.removeAll({});
 
-		return findAndCreateOrigin(originUrl, pathElements, callback);
+		return findAndCreateOrigin(originOfUrl(url), pathElements, callback);
 	});
+}
+
+QStringList KIOFuseVFS::mapUrlToVfs(QUrl url)
+{
+	// Build the path where it will appear in the VFS
+	auto targetPathComponents = QStringList{url.scheme(), url.authority()};
+	targetPathComponents.append(url.path().split(QLatin1Char('/')));
+
+	// Strip empty path elements, for instance in
+	// "file:///home/foo"
+	//         ^                   V
+	// "ftp://user@host/dir/ectory/"
+	targetPathComponents.removeAll({});
+
+	return targetPathComponents;
 }
 
 void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::function<void (const QString &, int)> callback)
@@ -343,15 +356,7 @@ void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::fu
 
 		qDebug(KIOFUSE_LOG) << "Origin found at" << urlWithoutPassword;
 
-		// Build the path where it will appear in the VFS
-		auto targetPathComponents = QStringList{url.scheme(), url.authority()};
-		targetPathComponents.append(url.path().split(QLatin1Char('/')));
-
-		// Strip empty path elements, for instance in
-		// "file:///home/foo"
-		//         ^                   V
-		// "ftp://user@host/dir/ectory/"
-		targetPathComponents.removeAll({});
+		auto targetPathComponents = mapUrlToVfs(url);
 
 		if(std::any_of(targetPathComponents.begin(), targetPathComponents.end(),
 		               [](const QString &s) { return !isValidFilename(s); }))
@@ -684,7 +689,20 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 
 	that->awaitAttrRefreshed(node, [=](int error) {
 		Q_UNUSED(error); // Just send the old target...
-		fuse_reply_readlink(req, symlinkNode->m_target.toUtf8().data());
+
+		QString target = symlinkNode->m_target;
+
+		// Convert an absolute link to be absolute within its origin
+		if(QDir::isAbsolutePath(target))
+		{
+			target = target.mid(1); // Strip the initial /
+			QUrl origin = that->originOfUrl(that->remoteUrl(symlinkNode));
+			origin = addPathElements(origin, target.split(QLatin1Char('/')));
+			target = that->m_mountpoint + that->mapUrlToVfs(origin).join(QLatin1Char('/'));
+			qCDebug(KIOFUSE_LOG) << "Detected reading of absolute symlink" << symlinkNode->m_target << "at" << that->virtualPath(symlinkNode) << ", rewritten to" << target;
+		}
+
+		fuse_reply_readlink(req, target.toUtf8().data());
 	});
 }
 
@@ -866,9 +884,33 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 		return;
 	}
 
+	QString target = QString::fromUtf8(link);
+
+	// Convert an absolute link within the VFS to an absolute link on the origin
+	// (inverse of readlink)
+	if(QDir::isAbsolutePath(target) && target.startsWith(that->m_mountpoint))
+	{
+		QUrl remoteSourceUrl = that->remoteUrl(remote),
+		     // QDir::relativePath would mangle the path, we want to keep it as-is
+		     remoteTargetUrl = that->localPathToRemoteUrl(target.mid(that->m_mountpoint.length()));
+
+		if(remoteTargetUrl.isValid()
+		   && remoteSourceUrl.scheme() == remoteTargetUrl.scheme()
+		   && remoteSourceUrl.authority() == remoteTargetUrl.authority())
+		{
+			target = remoteTargetUrl.path();
+			if(!target.startsWith(QLatin1Char('/')))
+				target.prepend(QLatin1Char('/'));
+
+			qCDebug(KIOFUSE_LOG) << "Detected creation of absolute symlink, rewritten to" << target;
+		}
+		else
+			qCWarning(KIOFUSE_LOG) << "Creation of absolute symlink to other origin";
+	}
+
 	auto namestr = QString::fromUtf8(name);
 	auto url = addPathElements(that->remoteUrl(node), {namestr});
-	auto *job = KIO::symlink(QString::fromUtf8(link), url);
+	auto *job = KIO::symlink(target, url);
 	that->connect(job, &KIO::SimpleJob::finished, [=] {
 		if(job->error())
 		{
@@ -2229,6 +2271,17 @@ void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &
 
 		callback(finalNode, 0);
 	});
+}
+
+QUrl KIOFuseVFS::originOfUrl(QUrl url)
+{
+	QUrl originUrl = url;
+	if(originUrl.path().startsWith(QLatin1Char('/')))
+		originUrl.setPath(QStringLiteral("/"));
+	else
+		originUrl.setPath({});
+
+	return originUrl;
 }
 
 bool KIOFuseVFS::setupSignalHandlers()

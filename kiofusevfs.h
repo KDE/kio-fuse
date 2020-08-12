@@ -149,6 +149,10 @@ private:
 	/** Invokes callback on error on when the child node was fetched and created/updated. */
 	void awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &node, const QString name, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
 
+	/** Returns the URL pointing to the origin of the linked resource, i.e. path set to / or empty. */
+	QUrl originOfUrl(QUrl url);
+	/** Returns the path elements where the URL url gets mapped to in this VFS. */
+	QStringList mapUrlToVfs(QUrl url);
 	/** Stats url. If successful, returns the path where url + pathElements is reachable in callback.
 	  * If it failed, it moves one part of pathElements to url and tries again, recursively. */
 	void findAndCreateOrigin(QUrl url, QStringList pathElements, std::function<void(const QString&, int)> callback);
@@ -169,6 +173,8 @@ private:
 	std::unique_ptr<struct fuse_conn_info_opts, decltype(&free)> m_fuseConnInfoOpts{nullptr, &free};
 	/** Fuse bookkeeping. */
 	std::unique_ptr<QSocketNotifier> m_fuseNotifier;
+	/** Path where this VFS is currently mounted at, with trailing '/'. */
+	QString m_mountpoint;
 
 	/** Fds of paired sockets. 
 	 * Used in conjunction with socket notifier to allow handling signals with the Qt event loop. **/
