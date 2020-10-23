@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(Qt5_MIN_VERSION 5.12)
-set(KF5_MIN_VERSION 5.66)
+set(KF5_MIN_VERSION 5.73)
 
 find_package(ECM ${KF5_MIN_VERSION} CONFIG REQUIRED)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
@@ -20,6 +20,8 @@ include(KDECMakeSettings)
 include(KDEFrameworkCompilerSettings NO_POLICY_SCOPE)
 include(ECMQtDeclareLoggingCategory)
 include(ECMSetupVersion)
+include(ECMGenerateDBusServiceFile)
+include(ECMConfiguredInstall)
 
 find_package(PkgConfig REQUIRED)
 find_package(Qt5 ${Qt5_MIN_VERSION} COMPONENTS Core REQUIRED)
@@ -57,10 +59,14 @@ target_compile_definitions(kio-fuse PRIVATE FUSE_USE_VERSION=31 ${FUSE3_CFLAGS_O
 target_link_libraries(kio-fuse PRIVATE Qt5::Core KF5::KIOCore ${FUSE3_LIBRARIES} ${FUSE3_LDFLAGS})
 install(TARGETS kio-fuse DESTINATION ${KDE_INSTALL_FULL_LIBEXECDIR})
 install(FILES kio-fuse-tmpfiles.conf DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/tmpfiles.d)
+
 ecm_generate_dbus_service_file(
    NAME org.kde.KIOFuse
    EXECUTABLE "${KDE_INSTALL_FULL_LIBEXECDIR}/kio-fuse -f"
+   SYSTEMD_SERVICE kio-fuse.service
    DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR}
 )
+
+ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${SYSTEMD_USER_UNIT_INSTALL_DIR})
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)

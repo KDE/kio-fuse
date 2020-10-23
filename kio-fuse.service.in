@@ -1,0 +1,8 @@
+[Unit]
+Description=Fuse interface for KIO
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=@KDE_INSTALL_FULL_LIBEXECDIR@/kio-fuse -f
+BusName=org.kde.KIOFuse
+Slice=background.slice
