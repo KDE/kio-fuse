@@ -9,17 +9,17 @@ To run the tests, run "make test". There is nothing to install (yet).
 
 To install build dependencies on Arch Linux:
 
-    pacman -S base-devel fuse3 cmake extra-cmake-modules qt5base kio kdbusaddons
+    pacman -S base-devel fuse3 cmake extra-cmake-modules qt5base kio
 
 To install build dependencies on openSUSE Tumbleweed:
 
     zypper install extra-cmake-modules 'cmake(KF5KIO)' 'pkgconfig(fuse3)' 
-    kio-devel kdbusaddons-devel 'cmake(Qt5Test)' 'cmake(Qt5Dbus)'
+    kio-devel 'cmake(Qt5Test)' 'cmake(Qt5Dbus)'
 
 To install build dependencies on Ubuntu 19.04:
 
     apt install fuse3 libfuse3-dev build-essential cmake extra-cmake-modules
-    pkg-config libkf5kio-dev libkf5dbusaddons-dev
+    pkg-config libkf5kio-dev
 
 Running
 -------

@@ -25,7 +25,6 @@ find_package(PkgConfig REQUIRED)
 find_package(Qt5 ${Qt5_MIN_VERSION} COMPONENTS Core REQUIRED)
 find_package(KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS
 	CoreAddons
-	DBusAddons
 	KIO
 )
 pkg_check_modules(FUSE3 REQUIRED fuse3)
@@ -58,6 +57,10 @@ target_compile_definitions(kio-fuse PRIVATE FUSE_USE_VERSION=31 ${FUSE3_CFLAGS_O
 target_link_libraries(kio-fuse PRIVATE Qt5::Core KF5::KIOCore ${FUSE3_LIBRARIES} ${FUSE3_LDFLAGS})
 install(TARGETS kio-fuse DESTINATION ${KDE_INSTALL_FULL_LIBEXECDIR})
 install(FILES kio-fuse-tmpfiles.conf DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/tmpfiles.d)
-kdbusaddons_generate_dbus_service_file("kio-fuse -f" org.kde.KIOFuse ${KDE_INSTALL_FULL_LIBEXECDIR})
+ecm_generate_dbus_service_file(
+   NAME org.kde.KIOFuse
+   EXECUTABLE "${KDE_INSTALL_FULL_LIBEXECDIR}/kio-fuse -f"
+   DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR}
+)
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
