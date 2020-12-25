@@ -5,7 +5,6 @@ Building
 --------
 
 Very simple: Install build dependencies, run cmake, make and you're done!
-To run the tests, run "make test". There is nothing to install (yet).
 
 To install build dependencies on Arch Linux:
 
@@ -21,8 +20,31 @@ To install build dependencies on Ubuntu 19.04:
     apt install fuse3 libfuse3-dev build-essential cmake extra-cmake-modules
     pkg-config libkf5kio-dev
 
-Running
--------
+To run the tests, run make test. To install, run make install.
+
+Using
+-----
+
+kio-fuse is a DBus activated service, so for permanent installation the
+installed service file has to be in a directory used by dbus-daemon.
+If you're installing into a custom prefix, you may want to link
+[prefix]/share/dbus-1/services/org.kde.KIOFuse.service into
+~/.local/share/dbus-1/services/ and
+[prefix]/lib/systemd/user/kio-fuse.service into
+~/.local/share/systemd/user/.
+
+To make sure that the installed version is actually used, stop any already
+running instance with "killall kio-fuse" and log out and in again.
+
+For quick testing, installation and DBus activation can be skipped. Instead,
+after stopping any previously running instance, start the built kio-fuse binary
+with the -f parameter and possibly other options.
+
+The DBus service is automatically used by KIO (5.66+) when opening a file on a
+KIO URL with a KIO-unaware application.
+
+Running it manually
+-------------------
 
 Create a new directory somewhere, make sure that no daemon is going to clean
 up after it (like systemd-tmpfiles in /run/user/...) and run kio-fuse -d $dir.
