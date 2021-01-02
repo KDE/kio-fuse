@@ -393,6 +393,11 @@ void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::fu
 		if(!finalNode)
 		{
 			finalNode = createNodeFromUDSEntry(statJob->statResult(), currentNode->m_stat.st_ino, targetPathComponents.last());
+			if(!finalNode)
+			{
+				qWarning(KIOFUSE_LOG) << "Unable to create a valid final node for" << url << "from its UDS Entry";
+				return callback({}, EIO);
+			}
 			insertNode(finalNode);
 		}
 
