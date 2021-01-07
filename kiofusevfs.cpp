@@ -1736,12 +1736,12 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 			attr.st_gid = gr->gr_gid;
 	}
 
-	if(entry.contains(KIO::UDSEntry::UDS_LOCAL_PATH) || entry.contains(KIO::UDSEntry::UDS_URL))
+	if(entry.contains(KIO::UDSEntry::UDS_LOCAL_PATH) || entry.contains(KIO::UDSEntry::UDS_TARGET_URL))
 	{
 		// Create as symlink if possible
 		QString target = entry.stringValue(KIO::UDSEntry::UDS_LOCAL_PATH);
 		if(target.isEmpty())
-			target = QUrl(entry.stringValue(KIO::UDSEntry::UDS_URL)).toLocalFile();
+			target = QUrl(entry.stringValue(KIO::UDSEntry::UDS_TARGET_URL)).toLocalFile();
 
 		if(!target.isEmpty())
 		{
@@ -1760,7 +1760,9 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 		{
 			attr.st_mode |= S_IFREG;
 			std::shared_ptr<KIOFuseRemoteFileNode> ret = nullptr;
-			const QUrl nodeUrl = QUrl{entry.stringValue(KIO::UDSEntry::UDS_URL)};
+			const QUrl nodeUrl = QUrl{entry.stringValue(KIO::UDSEntry::UDS_TARGET_URL)};
+			if(nodeUrl.isEmpty())
+				return nullptr;
 			if(m_useFileJob && KProtocolManager::supportsOpening(nodeUrl) && KProtocolManager::supportsTruncating(nodeUrl))
 				ret = std::make_shared<KIOFuseRemoteFileJobBasedFileNode>(parentIno, name, attr);
 			else
