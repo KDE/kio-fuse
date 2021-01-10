@@ -9,12 +9,12 @@ qt5_add_dbus_interface(KIOFUSE_TEST_SOURCES org.kde.KIOFuse.VFS.xml kiofuse_inte
 qt5_add_dbus_interface(KIOFUSE_TEST_SOURCES org.kde.KIOFuse.Private.xml kiofuseprivate_interface)
 
 add_executable(fileopstest-cache ${KIOFUSE_TEST_SOURCES})
-target_link_libraries(fileopstest-cache PRIVATE Qt5::Test Qt5::DBus)
+target_link_libraries(fileopstest-cache PRIVATE Qt5::Test Qt5::DBus KF5::KIOCore)
 target_compile_definitions(fileopstest-cache PRIVATE -DTEST_CACHE_BASED_IO)
 add_test(NAME fileopstest-cache COMMAND dbus-run-session ${CMAKE_BINARY_DIR}/bin/fileopstest-cache)
 set_tests_properties(fileopstest-cache PROPERTIES ENVIRONMENT KDE_FORK_SLAVES=1)
 
 add_executable(fileopstest-filejob ${KIOFUSE_TEST_SOURCES})
-target_link_libraries(fileopstest-filejob PRIVATE Qt5::Test Qt5::DBus)
+target_link_libraries(fileopstest-filejob PRIVATE Qt5::Test Qt5::DBus KF5::KIOCore)
 add_test(NAME fileopstest-filejob COMMAND dbus-run-session ${CMAKE_BINARY_DIR}/bin/fileopstest-filejob)
 set_tests_properties(fileopstest-filejob PROPERTIES ENVIRONMENT KDE_FORK_SLAVES=1)

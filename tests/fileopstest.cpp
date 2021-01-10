@@ -17,6 +17,9 @@
 #include <QtDBus/QDBusConnection>
 #include <QtDBus/QDBusReply>
 #include <QDebug>
+
+#include <KProtocolInfo>
+
 #include "kiofuse_interface.h"
 #include "kiofuseprivate_interface.h"
 
@@ -583,6 +586,9 @@ void FileOpsTest::testDeletionOps()
 
 void FileOpsTest::testArchiveOps()
 {
+	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("tar")))
+		QSKIP("Test requires tar protocol to be supported. See README for packages required.");
+
 	QString outerpath = QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz"));
 
 	// Mount a file inside the archive
@@ -879,6 +885,9 @@ void FileOpsTest::testSymlinkRewrite()
 	// Verify that it's absolute on the local side
 	QCOMPARE(readlink(localDir.filePath(QStringLiteral("symlink"))),
 	         localDir.filePath(QStringLiteral("somedir/../somefile")));
+
+	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("tar")))
+		QSKIP("Test requires tar protocol to be supported. See README for packages required.");
 
 	// Mount something with a different origin
 	QString outerpath = QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz"));
