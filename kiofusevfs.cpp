@@ -296,10 +296,7 @@ void KIOFuseVFS::setUseFileJob(bool useFileJob)
 void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const QString &, int)> callback)
 {
 	// First make sure it actually exists
-	QUrl urlWithoutPassword = url;
-	urlWithoutPassword.setPassword({});
-
-	qDebug(KIOFUSE_LOG) << "Stating" << urlWithoutPassword << "for mount";
+	qDebug(KIOFUSE_LOG) << "Stating" << url.toDisplayString() << "for mount";
 	auto statJob = KIO::stat(url);
 	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
 	                                            // files over plain HTTP
@@ -335,10 +332,7 @@ QStringList KIOFuseVFS::mapUrlToVfs(QUrl url)
 
 void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::function<void (const QString &, int)> callback)
 {
-	QUrl urlWithoutPassword = url;
-	urlWithoutPassword.setPassword({});
-
-	qDebug(KIOFUSE_LOG) << "Trying origin" << urlWithoutPassword;
+	qDebug(KIOFUSE_LOG) << "Trying origin" << url.toDisplayString();
 	auto statJob = KIO::stat(url);
 	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
 	                                            // files over plain HTTP
@@ -354,7 +348,7 @@ void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::fu
 			return callback({}, kioErrorToFuseError(statJob->error()));
 		}
 
-		qDebug(KIOFUSE_LOG) << "Origin found at" << urlWithoutPassword;
+		qDebug(KIOFUSE_LOG) << "Origin found at" << url.toDisplayString();
 
 		auto targetPathComponents = mapUrlToVfs(url);
 
@@ -395,7 +389,7 @@ void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::fu
 			finalNode = createNodeFromUDSEntry(statJob->statResult(), currentNode->m_stat.st_ino, targetPathComponents.last());
 			if(!finalNode)
 			{
-				qWarning(KIOFUSE_LOG) << "Unable to create a valid final node for" << url << "from its UDS Entry";
+				qWarning(KIOFUSE_LOG) << "Unable to create a valid final node for" << url.toDisplayString() << "from its UDS Entry";
 				return callback({}, EIO);
 			}
 			insertNode(finalNode);
@@ -2245,10 +2239,7 @@ void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &
 			return callback({}, ENOENT);
 	}
 
-	QUrl urlWithoutPassword = url;
-	urlWithoutPassword.setPassword({});
-
-	qDebug(KIOFUSE_LOG) << "Mounting" << urlWithoutPassword;
+	qDebug(KIOFUSE_LOG) << "Mounting" << url.toDisplayString();
 	auto statJob = KIO::stat(url);
 	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
 	                                            // files over plain HTTP
