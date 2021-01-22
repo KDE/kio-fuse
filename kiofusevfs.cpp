@@ -1066,7 +1066,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 			auto child = that->nodeForIno(ino);
 			if(!child)
 			{
-				qWarning(KIOFUSE_LOG) << "Node" << node->m_nodeName << "references nonexistant child";
+				qWarning(KIOFUSE_LOG) << "Node" << node->m_nodeName << "references nonexistent child";
 				continue;
 			}
 
@@ -1421,7 +1421,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFus
 		auto child = nodeForIno(ino);
 		if(!child)
 		{
-			qWarning(KIOFUSE_LOG) << "Node" << parent->m_nodeName << "references nonexistant child";
+			qWarning(KIOFUSE_LOG) << "Node" << parent->m_nodeName << "references nonexistent child";
 			continue;
 		}
 
