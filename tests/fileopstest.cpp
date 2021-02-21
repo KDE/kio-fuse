@@ -39,6 +39,7 @@ private Q_SLOTS:
 	void testRenameOps();
 	void testDeletionOps();
 	void testArchiveOps();
+	void testManWorkaround();
 	void testKioErrorMapping();
 	void testRootLookup();
 	void testFilenameEscaping();
@@ -619,6 +620,25 @@ void FileOpsTest::testArchiveOps()
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
 	innerfile.close();
+}
+
+void FileOpsTest::testManWorkaround()
+{
+	// The man ioslave has "hybrid" directories which stat as regular files but also support
+	// listDir. This behaviour is not supported and mounting has to fail.
+
+	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("man")))
+		QSKIP("Test requires man protocol to be supported. See README for packages required.");
+
+	QDBusPendingReply<QString> reply = m_kiofuse_iface.mountUrl(QStringLiteral("man:foo"));
+	reply.waitForFinished();
+	QVERIFY(reply.isError());
+	QCOMPARE(reply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.CannotMount"));
+
+	reply = m_kiofuse_iface.mountUrl(QStringLiteral("man:/"));
+	reply.waitForFinished();
+	QVERIFY(reply.isError());
+	QCOMPARE(reply.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.CannotMount"));
 }
 
 void FileOpsTest::testKioErrorMapping()

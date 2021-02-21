@@ -392,6 +392,17 @@ void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::fu
 				qWarning(KIOFUSE_LOG) << "Unable to create a valid final node for" << url.toDisplayString() << "from its UDS Entry";
 				return callback({}, EIO);
 			}
+
+			// Some ioslaves like man:/ implement "index files" for folders (including /) by making
+			// them look as regular file when stating, but they also support listDir for directory
+			// functionality. This behaviour is not compatible, so just reject it outright.
+			if((url.path().isEmpty() || url.path() == QStringLiteral("/"))
+			   && !S_ISDIR(finalNode->m_stat.st_mode))
+			{
+				qWarning(KIOFUSE_LOG) << "Root of mount at" << url.toDisplayString() << "not a directory";
+				return callback({}, ENOTDIR);
+			}
+
 			insertNode(finalNode);
 		}
 
