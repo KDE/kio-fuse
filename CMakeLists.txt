@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(Qt5_MIN_VERSION 5.12)
-# Use ecm_generate_dbus_service_file + ecm_install_configured_files once bumped to 5.73+
-set(KF5_MIN_VERSION 5.66)
+set(KF5_MIN_VERSION 5.73)
 
 find_package(ECM ${KF5_MIN_VERSION} CONFIG REQUIRED)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
@@ -21,8 +20,8 @@ include(KDECMakeSettings)
 include(KDEFrameworkCompilerSettings NO_POLICY_SCOPE)
 include(ECMQtDeclareLoggingCategory)
 include(ECMSetupVersion)
-#include(ECMGenerateDBusServiceFile)
-#include(ECMConfiguredInstall)
+include(ECMGenerateDBusServiceFile)
+include(ECMConfiguredInstall)
 
 find_package(PkgConfig REQUIRED)
 find_package(Qt5 ${Qt5_MIN_VERSION} COMPONENTS Core REQUIRED)
@@ -65,31 +64,13 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 	install(FILES kio-fuse-tmpfiles.conf DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/tmpfiles.d)
 endif()
 
-# Once KF5 5.73 is required
-#
-#ecm_generate_dbus_service_file(
-#   NAME org.kde.KIOFuse
-#   EXECUTABLE "${KDE_INSTALL_FULL_LIBEXECDIR}/kio-fuse -f"
-#   SYSTEMD_SERVICE kio-fuse.service
-#   DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR}
-#)
-#
-#ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${SYSTEMD_USER_UNIT_INSTALL_DIR})
+ecm_generate_dbus_service_file(
+   NAME org.kde.KIOFuse
+   EXECUTABLE "${KDE_INSTALL_FULL_LIBEXECDIR}/kio-fuse -f"
+   SYSTEMD_SERVICE kio-fuse.service
+   DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR}
+)
 
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/org.kde.KIOFuse.service
-"[D-BUS Service]
-Name=org.kde.KIOFuse
-Exec=${KDE_INSTALL_FULL_LIBEXECDIR}/kio-fuse -f
-SystemdService=kio-fuse.service
-")
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.kde.KIOFuse.service DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR})
-
-if(CMAKE_SYSTEM_NAME MATCHES "Linux")
-	# We could argue that this needs a separate "if(LINUX_WITH_SYSTEMD)",
-	# but the ECM macro (see above) is expected to do the right thing
-	# when KF5 5.73 is required.
-	configure_file(kio-fuse.service.in ${CMAKE_CURRENT_BINARY_DIR}/kio-fuse.service)
-	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/kio-fuse.service DESTINATION ${SYSTEMD_USER_UNIT_INSTALL_DIR})
-endif()
+ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${SYSTEMD_USER_UNIT_INSTALL_DIR})
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
