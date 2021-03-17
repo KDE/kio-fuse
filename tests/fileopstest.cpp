@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include <dirent.h>
 
 #include <QProcess>
 #include <QStandardPaths>
@@ -35,6 +36,7 @@ private Q_SLOTS:
 	void testLocalPathToRemoteUrl();
 	void testLocalFileOps();
 	void testLocalDirOps();
+	void testReaddirOps();
 	void testCreationOps();
 	void testRenameOps();
 	void testDeletionOps();
@@ -396,6 +398,63 @@ void FileOpsTest::testLocalDirOps()
 	mirrorEntryList = QDir(reply).entryList(QDir::NoFilter, QDir::Name);
 
 	QCOMPARE(mirrorEntryList, sourceEntryList);
+}
+
+void FileOpsTest::testReaddirOps()
+{
+	QTemporaryDir localDir;
+	QVERIFY(localDir.isValid());
+
+	// Mount the temporary dir
+	QString testDirPath = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!testDirPath.isEmpty());
+
+	// Fill the directory with some files
+	for(unsigned int i=0; i<=10; i++)
+	{
+		QVERIFY(QFile(QStringLiteral("%1/tmpFile%2").arg(testDirPath).arg(i)).open(QIODevice::WriteOnly));
+	}
+
+	DIR *testDir = opendir(qPrintable(testDirPath));
+	QVERIFY(testDir);
+
+	auto opendirCleanup = qScopeGuard([&](){ closedir(testDir); });
+
+	QStringList testDirEntryList;
+	QStringList testDirEntryListUpdated;
+
+	// Get the initial entry list to compare with
+	struct dirent *pDirent = nullptr; 
+	while((pDirent = readdir(testDir)) != nullptr)
+		testDirEntryList.push_back(QString::fromUtf8(pDirent->d_name));
+	testDirEntryList.sort();
+	
+	// Verify that entries remain same even if we add new or remove existing entries
+	QVERIFY(QFile::remove(testDirPath + QStringLiteral("/tmpFile1")));
+	QVERIFY(QFile(testDirPath + QStringLiteral("/addCaseFile")).open(QIODevice::WriteOnly));
+
+	rewinddir(testDir);
+	while((pDirent = readdir(testDir)) != nullptr)
+		testDirEntryListUpdated.push_back(QString::fromUtf8(pDirent->d_name));
+	testDirEntryListUpdated.sort();
+
+	QCOMPARE(testDirEntryListUpdated, testDirEntryList);
+
+	// Verify that entries remain same even if entries are modified while iterating
+	testDirEntryListUpdated.clear();
+	rewinddir(testDir);
+
+	unsigned int count = 1;
+	while((pDirent = readdir(testDir)) != nullptr)
+	{
+		QVERIFY(QFile(QStringLiteral("%1/iterCaseFile%2").arg(testDirPath).arg(count)).open(QIODevice::WriteOnly));
+			
+		testDirEntryListUpdated.push_back(QString::fromUtf8(pDirent->d_name));
+		count++;
+	}
+	testDirEntryListUpdated.sort();
+
+	QCOMPARE(testDirEntryListUpdated, testDirEntryList);
 }
 
 void FileOpsTest::testCreationOps()

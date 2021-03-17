@@ -68,7 +68,9 @@ struct KIOFuseVFS::FuseLLOps : public fuse_lowlevel_ops
 		flush = &KIOFuseVFS::flush;
 		release = &KIOFuseVFS::release;
 		fsync = &KIOFuseVFS::fsync;
+		opendir = &KIOFuseVFS::opendir;
 		readdir = &KIOFuseVFS::readdir;
+		releasedir = &KIOFuseVFS::releasedir;
 	}
 };
 
@@ -1035,9 +1037,8 @@ static void appendDirentry(std::vector<char> &dirbuf, fuse_req_t req, const char
 	fuse_add_direntry(req, dirbuf.data() + oldsize, dirbuf.size() + oldsize, name, stbuf, dirbuf.size());
 }
 
-void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)
+void KIOFuseVFS::opendir(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 {
-	Q_UNUSED(fi);
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	auto node = that->nodeForIno(ino);
 	if(!node)
@@ -1054,15 +1055,18 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		return;
 	}
 
-	that->awaitChildrenComplete(dirNode, [=](int error){
+	node->m_openCount += 1;
+
+	that->awaitChildrenComplete(dirNode, [=, myfi=*fi](int error) mutable {
 		if(error)
 		{
 			fuse_reply_err(req, error);
 			return;
 		}
 
-		std::vector<char> dirbuf;
-		appendDirentry(dirbuf, req, ".", &node->m_stat);
+		auto dirbuf = std::make_unique<std::vector<char>>();
+
+		appendDirentry(*dirbuf, req, ".", &node->m_stat);
 
 		std::shared_ptr<KIOFuseNode> parentNode;
 		if(node->m_parentIno != KIOFuseIno::DeletedRoot)
@@ -1070,7 +1074,7 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		if(!parentNode)
 			parentNode = that->nodeForIno(KIOFuseIno::Root);
 		if(parentNode)
-			appendDirentry(dirbuf, req, "..", &parentNode->m_stat);
+			appendDirentry(*dirbuf, req, "..", &parentNode->m_stat);
 
 		for(auto ino : dirNode->m_childrenInos)
 		{
@@ -1081,14 +1085,75 @@ void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 				continue;
 			}
 
-			appendDirentry(dirbuf, req, qPrintable(child->m_nodeName), &child->m_stat);
+			appendDirentry(*dirbuf, req, qPrintable(child->m_nodeName), &child->m_stat);
 		}
 
-		if(off < off_t(dirbuf.size()))
-			fuse_reply_buf(req, dirbuf.data() + off, std::min(off_t(size), off_t(dirbuf.size()) - off));
-		else
-			fuse_reply_buf(req, nullptr, 0);
+		myfi.fh = reinterpret_cast<uint64_t>(dirbuf.release());
+
+		if (!(myfi.flags & O_NOATIME))
+			clock_gettime(CLOCK_REALTIME, &node->m_stat.st_atim);
+
+		fuse_reply_open(req, &myfi);
 	});
+}
+
+void KIOFuseVFS::readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	auto node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	auto dirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(node);
+	if(!dirNode)
+	{
+		fuse_reply_err(req, ENOTDIR);
+		return;
+	}
+
+	std::vector<char>* dirbuf = reinterpret_cast<std::vector<char>*>(fi->fh);
+	if(!dirbuf)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	if(off < off_t(dirbuf->size()))
+		fuse_reply_buf(req, dirbuf->data() + off, std::min(off_t(size), off_t(dirbuf->size()) - off));
+	else
+		fuse_reply_buf(req, nullptr, 0);
+}
+
+void KIOFuseVFS::releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+{
+	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
+	auto node = that->nodeForIno(ino);
+	if(!node)
+	{
+		fuse_reply_err(req, EIO);
+		return;
+	}
+
+	auto dirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(node);
+	if(!dirNode)
+	{
+		fuse_reply_err(req, ENOTDIR);
+		return;
+	}
+
+	node->m_openCount -= 1;
+	if(std::vector<char> *ptr = reinterpret_cast<std::vector<char>*>(fi->fh))
+  	{
+		delete ptr;
+  	}
+	else{
+		qWarning(KIOFUSE_LOG) << "File handler of node" << node->m_nodeName << "already null";
+  	}
+	  
+	fuse_reply_err(req, 0);
 }
 
 void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi)

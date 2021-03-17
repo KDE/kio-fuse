@@ -1,6 +1,4 @@
 Filesystem features:
-- opendir/readdir/releasedir could be more POSIX compliant by increasing the lookup count of
-  children and storing a copy of childrenInos in fuse_file_info.
 - Handle more FUSE ops:
   * link (to allow relinking of deleted nodes only, like O_TMPFILE)
   * statvfs (?)

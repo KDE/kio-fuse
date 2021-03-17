@@ -78,8 +78,10 @@ private:
 	static void open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi);
 	static void rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent,
 	                   const char *newname, unsigned int flags);
+	static void opendir(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi);
 	static void readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                    struct fuse_file_info *fi);
+	static void releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
 	static void read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 	                 struct fuse_file_info *fi);
 	static void write(fuse_req_t req, fuse_ino_t ino, const char *buf,
