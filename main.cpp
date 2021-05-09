@@ -6,8 +6,10 @@
 #include <fuse_lowlevel.h>
 
 #include <QCoreApplication>
+#include <QTimer>
 
 #include <KAboutData>
+#include <KUiServerJobTracker>
 
 #include "kiofuseservice.h"
 #include "kiofuseversion.h"
@@ -26,6 +28,28 @@ static struct fuse_opt kiofuse_opts[] = {
 };
 
 #undef KIOFUSE_OPT
+
+/** A modified version of KUiServerJobTracker which registers jobs after running
+  * for more than a specific time. kio-fuse starts quite a lot of jobs, most of them
+  * won't need to be shown to the user. While Plasma does some filtering itself based
+  * on job duration, the registration itself is quite expensive already. */
+class LongRunningJobTracker : public KUiServerJobTracker
+{
+public:
+	void registerJob(KJob *job) override {
+		auto timer = new QTimer(job);
+		job->connect(job, &KJob::finished, timer, [=] {
+			timer->stop();
+			timer->deleteLater();
+		});
+		job->connect(timer, &QTimer::timeout, job, [=] {
+			KUiServerJobTracker::registerJob(job);
+		});
+		timer->start(2000);
+	}
+	// KUiServerJobTracker::unregisterJob checks whether the job was registered
+	// itself already, so it's usable as-is.
+};
 
 int main(int argc, char *argv[])
 {
@@ -54,6 +78,8 @@ int main(int argc, char *argv[])
 	}
 
 	QCoreApplication a(argc, argv);
+	KIO::setJobTracker(new LongRunningJobTracker);
+
 	KIOFuseService kiofuseservice;
 
 	KAboutData about(QStringLiteral("kiofuse"), QStringLiteral("FUSE Interface for KIO"), QStringLiteral(KIOFUSE_VERSION_STRING));

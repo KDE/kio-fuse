@@ -29,6 +29,7 @@ find_package(Qt${QT_MAJOR_VERSION} ${QT_MIN_VERSION} COMPONENTS Core REQUIRED)
 find_package(KF${QT_MAJOR_VERSION} ${KF_MIN_VERSION} REQUIRED COMPONENTS
 	CoreAddons
 	KIO
+	JobWidgets
 )
 pkg_check_modules(FUSE3 REQUIRED fuse3)
 
@@ -57,7 +58,12 @@ ecm_qt_declare_logging_category(KIOFUSE_SOURCES
 add_executable(kio-fuse ${KIOFUSE_SOURCES})
 target_include_directories(kio-fuse PRIVATE ${FUSE3_INCLUDE_DIRS})
 target_compile_definitions(kio-fuse PRIVATE FUSE_USE_VERSION=31 ${FUSE3_CFLAGS_OTHER})
-target_link_libraries(kio-fuse PRIVATE Qt::Core KF${QT_MAJOR_VERSION}::KIOCore ${FUSE3_LIBRARIES} ${FUSE3_LDFLAGS})
+target_link_libraries(kio-fuse PRIVATE
+	Qt::Core
+	KF${QT_MAJOR_VERSION}::KIOCore
+	KF${QT_MAJOR_VERSION}::JobWidgets
+	${FUSE3_LIBRARIES} ${FUSE3_LDFLAGS}
+)
 install(TARGETS kio-fuse DESTINATION ${KDE_INSTALL_FULL_LIBEXECDIR})
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 	# We could argue that this needs a separate "if(LINUX_WITH_TMPFILES_D)".
