@@ -1739,7 +1739,7 @@ void KIOFuseVFS::markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node)
 void KIOFuseVFS::replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 {
 	// Set st_blocks accordingly
-	node->m_stat.st_blocks = (node->m_stat.st_size + node->m_stat.st_blksize - 1) / node->m_stat.st_blksize;
+	node->m_stat.st_blocks = (node->m_stat.st_size + 512 - 1) / 512;
 
 	// TODO: Validity timeout?
 	fuse_reply_attr(req, &node->m_stat, 0);
