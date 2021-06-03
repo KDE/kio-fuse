@@ -76,7 +76,7 @@ public:
 	// be emitted on finish.
 	bool m_childrenRequested = false;
 	// Stores the last time a node's children were refreshed via KIO::listDir.
-	std::chrono::steady_clock::time_point m_lastChildrenRefresh;
+	std::chrono::steady_clock::time_point m_lastChildrenRefresh = decltype(m_lastChildrenRefresh)::min();
 	// Returns true if a node is due for a readdir refresh, false otherwise.
 	bool haveChildrenTimedOut() { return m_lastChildrenRefresh < g_timeoutEpoch || (std::chrono::steady_clock::now() - m_lastChildrenRefresh) >= ATTR_TIMEOUT; }
 
