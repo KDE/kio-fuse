@@ -1,0 +1,9 @@
+Dependencies:
+- 'on': ['Linux', 'FreeBSD']
+  'require':
+    'frameworks/extra-cmake-modules': '@stable'
+    'frameworks/kcoreaddons' : '@stable'
+    'frameworks/kio' : '@stable'
+
+Options:
+  run-tests: False
