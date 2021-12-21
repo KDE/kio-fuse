@@ -1990,11 +1990,11 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBas
 			int cacheFd = fileno(node->m_localCache);
 			if(lseek(cacheFd, 0, SEEK_END) == -1
 			   || !sane_write(cacheFd, data.data(), data.size()))
-				emit node->localCacheChanged(errno);
+				Q_EMIT node->localCacheChanged(errno);
 			else
 			{
 				node->m_cacheSize += data.size();
-				emit node->localCacheChanged(0);
+				Q_EMIT node->localCacheChanged(0);
 			}
 		});
 		connect(job, &KIO::TransferJob::result, [=] {
@@ -2008,7 +2008,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBas
 				node->m_cacheSize = 0;
 				node->m_cacheComplete = false;
 				node->m_localCache = nullptr;
-				emit node->localCacheChanged(kioErrorToFuseError(job->error()));
+				Q_EMIT node->localCacheChanged(kioErrorToFuseError(job->error()));
 			}
 			else
 			{
@@ -2016,7 +2016,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBas
 				// This also ensures that the cache is seen as complete.
 				node->m_stat.st_size = node->m_cacheSize;
 				node->m_cacheComplete = true;
-				emit node->localCacheChanged(0);
+				Q_EMIT node->localCacheChanged(0);
 			}
 		});
 	}
@@ -2123,7 +2123,7 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 
 			if(job->error() && job->error() != KJob::KilledJobError)
 			{
-				emit remoteNode->gotChildren(kioErrorToFuseError(job->error()));
+				Q_EMIT remoteNode->gotChildren(kioErrorToFuseError(job->error()));
 				return;
 			}
 
@@ -2136,7 +2136,7 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 			}
 
 			remoteNode->m_lastChildrenRefresh = refreshTime;
-			emit remoteNode->gotChildren(0);
+			Q_EMIT remoteNode->gotChildren(0);
 		});
 
 		remoteNode->m_childrenRequested = true;
@@ -2239,7 +2239,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedF
 			{
 				qWarning(KIOFUSE_LOG) << "Failed to send data:" << job->errorString();
 				markCacheDirty(node); // Try again
-				emit node->cacheFlushed(kioErrorToFuseError(job->error()));
+				Q_EMIT node->cacheFlushed(kioErrorToFuseError(job->error()));
 				return;
 			}
 
@@ -2248,7 +2248,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedF
 				// Nobody wrote to the cache while sending data
 				m_dirtyNodes.extract(node->m_stat.st_ino);
 				node->m_numKilledJobs = 0;
-				emit node->cacheFlushed(0);
+				Q_EMIT node->cacheFlushed(0);
 			}
 			else
 				awaitNodeFlushed(node, [](int){});
@@ -2289,7 +2289,7 @@ void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, st
 
 			Q_UNUSED(mountedNode);
 			remoteNode->m_statRequested = false;
-			emit remoteNode->statRefreshed(error);
+			Q_EMIT remoteNode->statRefreshed(error);
 		});
 	}
 
