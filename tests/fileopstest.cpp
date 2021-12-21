@@ -56,12 +56,12 @@ private Q_SLOTS:
 #endif // WASTE_DISK_SPACE
 
 private:
-	QDateTime roundDownToSecond(QDateTime dt);
+	QDateTime roundDownToSecond(const QDateTime &dt);
 	bool forceNodeTimeout();
 	/** Unlike QFileInfo::symLinkTarget, which returns absolute paths only,
 	  * this returns the raw link content. On failure or truncation, a null
 	  * QString is returned instead. */
-	QString readlink(QString symlink);
+	QString readlink(const QString &symlink);
 
 	org::kde::KIOFuse::VFS m_kiofuse_iface{QStringLiteral("org.kde.KIOFuse"),
 		                                   QStringLiteral("/org/kde/KIOFuse"),
@@ -1029,7 +1029,7 @@ void FileOpsTest::testReadWrite4GBFile()
 }
 #endif // WASTE_DISK_SPACE
 
-QDateTime FileOpsTest::roundDownToSecond(QDateTime dt)
+QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
 {
 	return QDateTime::fromTime_t(dt.toTime_t());
 }
@@ -1041,7 +1041,7 @@ bool FileOpsTest::forceNodeTimeout()
 	return !reply.isError();
 }
 
-QString FileOpsTest::readlink(QString symlink)
+QString FileOpsTest::readlink(const QString &symlink)
 {
 	char buf[PATH_MAX];
 	int len = ::readlink(qPrintable(symlink), buf, sizeof(buf));

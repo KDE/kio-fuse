@@ -38,7 +38,7 @@ public:
 	virtual ~KIOFuseService();
 	/** Attempts to register the service and start kiofusevfs. If both succeed,
 	  * returns true, false otherwise. */
-	bool start(struct fuse_args &args, QString mountpoint, bool foreground);
+	bool start(struct fuse_args &args, const QString &mountpoint, bool foreground);
 	KIOFuseVFS kiofusevfs;
 
 public Q_SLOTS:

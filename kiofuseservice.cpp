@@ -31,7 +31,7 @@ KIOFuseService::~KIOFuseService()
 	kiofusevfs.stop();
 }
 
-bool KIOFuseService::start(struct fuse_args &args, QString mountpoint, bool foreground)
+bool KIOFuseService::start(struct fuse_args &args, const QString &mountpoint, bool foreground)
 {
 	if(!m_mountpoint.isEmpty())
 	{

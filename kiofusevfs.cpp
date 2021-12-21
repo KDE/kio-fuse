@@ -295,7 +295,7 @@ void KIOFuseVFS::setUseFileJob(bool useFileJob)
 	m_useFileJob = useFileJob;
 }
 
-void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const QString &, int)> callback)
+void KIOFuseVFS::mountUrl(const QUrl &url, const std::function<void (const QString &, int)> &callback)
 {
 	// First make sure it actually exists
 	qDebug(KIOFUSE_LOG) << "Stating" << url.toDisplayString() << "for mount";
@@ -317,7 +317,7 @@ void KIOFuseVFS::mountUrl(QUrl url, std::function<void (const QString &, int)> c
 	});
 }
 
-QStringList KIOFuseVFS::mapUrlToVfs(QUrl url)
+QStringList KIOFuseVFS::mapUrlToVfs(const QUrl &url)
 {
 	// Build the path where it will appear in the VFS
 	auto targetPathComponents = QStringList{url.scheme(), url.authority()};
@@ -332,7 +332,7 @@ QStringList KIOFuseVFS::mapUrlToVfs(QUrl url)
 	return targetPathComponents;
 }
 
-void KIOFuseVFS::findAndCreateOrigin(QUrl url, QStringList pathElements, std::function<void (const QString &, int)> callback)
+void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathElements, const std::function<void (const QString &, int)> &callback)
 {
 	qDebug(KIOFUSE_LOG) << "Trying origin" << url.toDisplayString();
 	auto statJob = KIO::stat(url);
@@ -1490,7 +1490,7 @@ bool KIOFuseVFS::isEnvironmentValid()
 	return true;
 }
 
-std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString name) const
+std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString &name) const
 {
 	for(auto ino : parent->m_childrenInos)
 	{
@@ -1763,7 +1763,7 @@ void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 	fuse_reply_entry(req, &entry);
 }
 
-std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride)
+std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, const QString &nameOverride)
 {
 	QString name = nameOverride;
 	if(name.isEmpty())
@@ -1949,7 +1949,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::updateNodeFromUDSEntry(const std::share
 	return node;
 }
 
-void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, std::function<void(int error)> callback)
+void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, const std::function<void(int error)> &callback)
 {
 	if(bytes < 0)
 	{
@@ -2047,7 +2047,7 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBas
 	);
 }
 
-void KIOFuseVFS::awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, const std::function<void (int)> &callback)
 {
 	return awaitBytesAvailable(node, std::numeric_limits<off_t>::max(), [callback](int error) {
 		// ESPIPE == cache complete, but less than the requested size, which is expected.
@@ -2055,7 +2055,7 @@ void KIOFuseVFS::awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBase
 	});
 }
 
-void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, const std::function<void (int)> &callback)
 {
 	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(node);
 	if(!remoteNode)
@@ -2162,7 +2162,7 @@ void KIOFuseVFS::markCacheDirty(const std::shared_ptr<KIOFuseRemoteCacheBasedFil
 	m_dirtyNodes.insert(node->m_stat.st_ino);
 }
 
-void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, const std::function<void (int)> &callback)
 {
 	if(!node->m_cacheDirty && !node->m_flushRunning)
 		return callback(0); // Nothing to flush/wait for
@@ -2266,7 +2266,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedF
 	);
 }
 
-void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, std::function<void (int)> callback)
+void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, const std::function<void (int)> &callback)
 {
 	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
 	if(!remoteNode || !remoteNode->hasStatTimedOut())
@@ -2304,7 +2304,7 @@ void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, st
 	);
 }
 
-void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &parent, const QString name, std::function<void (const std::shared_ptr<KIOFuseNode> &, int)> callback)
+void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &parent, const QString &name, const std::function<void (const std::shared_ptr<KIOFuseNode> &, int)> &callback)
 {
 	auto url = addPathElements(remoteUrl(parent), {name});
 	if(url.isEmpty()) // Not remote?
@@ -2347,7 +2347,7 @@ void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &
 	});
 }
 
-QUrl KIOFuseVFS::originOfUrl(QUrl url)
+QUrl KIOFuseVFS::originOfUrl(const QUrl &url)
 {
 	QUrl originUrl = url;
 	if(originUrl.path().startsWith(QLatin1Char('/')))

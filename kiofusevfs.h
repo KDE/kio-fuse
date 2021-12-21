@@ -51,7 +51,7 @@ public:
 	void setUseFileJob(bool useFileJob);
 	/** Runs KIO::stat on url and (if successful) creates an origin node at the lowest possible level.
 	  * Returns the relative path to where url is reachable in the callback. */
-	void mountUrl(QUrl url, std::function<void(const QString&, int)> callback);
+	void mountUrl(const QUrl &url, const std::function<void(const QString&, int)> &callback);
 	/** Converts a local path into a remote URL if it is mounted within the VFS */
 	QUrl localPathToRemoteUrl(const QString &localPath) const;
 	/** Returns the path upwards until a root node. */
@@ -101,7 +101,7 @@ private:
 	static void signalHandler(int signal);
 
 	/** Returns a pointer to a child node of parent with m_nodeName == name or nullptr. */
-	std::shared_ptr<KIOFuseNode> nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString name) const;
+	std::shared_ptr<KIOFuseNode> nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString &name) const;
 	/** Returns a pointer to the KIOFuseNode with inode number ino or nullptr. */
 	std::shared_ptr<KIOFuseNode> nodeForIno(const fuse_ino_t ino) const;
 	/** Removes the node from the old parent's children list (if any) and adds it to the new parent's list.*/
@@ -123,7 +123,7 @@ private:
 	/** Depending on the lookup count, it makes the node a child of DeletedRoot or deletes it directly. */
 	void markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node);
 	/** Creates a new node with the matching type and fills m_stat fields. */
-	std::shared_ptr<KIOFuseNode> createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, QString nameOverride);
+	std::shared_ptr<KIOFuseNode> createNodeFromUDSEntry(const KIO::UDSEntry &entry, const fuse_ino_t parentIno, const QString &nameOverride);
 	/** Applies a fresh KIO::UDSEntry to an existing node. If the type needs changing,
 	 * The old node is deleted and a new one inserted instead. The now fresh node is returned. */
 	std::shared_ptr<KIOFuseNode> updateNodeFromUDSEntry(const std::shared_ptr<KIOFuseNode> &node, const KIO::UDSEntry &entry);
@@ -136,28 +136,28 @@ private:
 
 	/** Invokes callback on error or when the bytes are available for reading/writing.
 	  * If the file is smaller than bytes, it sets error = ESPIPE. */
-	void awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, std::function<void(int error)> callback);
+	void awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, off_t bytes, const std::function<void(int error)> &callback);
 	/** Invokes callback on error or when the cache is marked as complete. */
-	void awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void(int error)> callback);
+	void awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, const std::function<void(int error)> &callback);
 	/** Invokes callback on error or when all children nodes are available */
-	void awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, std::function<void(int error)> callback);
+	void awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, const std::function<void(int error)> &callback);
 	/** Marks a node's cache as dirty and add it to m_dirtyNodes. */
 	void markCacheDirty(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node);
 	/** Calls the callback once the cache is not dirty anymore (no cache counts as clean as well).
 	  * If writes happen while a flush is sending data, a flush will be retriggered. */
-	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, std::function<void(int error)> callback);
+	void awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, const std::function<void(int error)> &callback);
 	/** Invokes callback on error or when a node has been refreshed (if its stat timed out) */
-	void awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, std::function<void(int error)> callback);
+	void awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, const std::function<void(int error)> &callback);
 	/** Invokes callback on error on when the child node was fetched and created/updated. */
-	void awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &node, const QString name, std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> callback);
+	void awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &node, const QString &name, const std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> &callback);
 
 	/** Returns the URL pointing to the origin of the linked resource, i.e. path set to / or empty. */
-	QUrl originOfUrl(QUrl url);
+	QUrl originOfUrl(const QUrl &url);
 	/** Returns the path elements where the URL url gets mapped to in this VFS. */
-	QStringList mapUrlToVfs(QUrl url);
+	QStringList mapUrlToVfs(const QUrl &url);
 	/** Stats url. If successful, returns the path where url + pathElements is reachable in callback.
 	  * If it failed, it moves one part of pathElements to url and tries again, recursively. */
-	void findAndCreateOrigin(QUrl url, QStringList pathElements, std::function<void(const QString&, int)> callback);
+	void findAndCreateOrigin(const QUrl &url, const QStringList &pathElements, const std::function<void(const QString&, int)> &callback);
     
 	/** Returns the corresponding FUSE error to the given KIO Job error */
 	static int kioErrorToFuseError(const int kioError);

@@ -21,7 +21,7 @@
 class KIOFuseNode {
 public:
 	// Creates a new node. Make sure to set the node's m_stat.st_ino once inserted.
-	KIOFuseNode(const fuse_ino_t parentIno, QString nodeName, const struct stat &stat) :
+	KIOFuseNode(const fuse_ino_t parentIno, const QString &nodeName, const struct stat &stat) :
 	    m_parentIno(parentIno),
 	    m_nodeName(nodeName),
 	    m_stat(stat)
