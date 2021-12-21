@@ -131,7 +131,7 @@ void FileOpsTest::testLocalPathToRemoteUrl()
 	// mtp:/ -> Remote URL can't possibly be location of KIOFuse mount.
 	// / -> Root can't possibly be location of KIOFuse mount.
 	// m_mountDir -> Whilst this is in the KIOFuse mount, no remote URL exists for it
-	for(auto url : {QStringLiteral("mtp:/"), QStringLiteral("/"), m_mountDir.path()})
+	for(const auto &url : {QStringLiteral("mtp:/"), QStringLiteral("/"), m_mountDir.path()})
 	{
 		errorReply = m_kiofuse_iface.remoteUrl(url);
 		errorReply.waitForFinished();
