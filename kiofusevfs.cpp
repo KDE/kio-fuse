@@ -602,7 +602,7 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 			fileJob->truncate(sharedState->value.st_size);
 			connect(fileJob, &KIO::FileJob::truncated, [=] {
 				fileJob->close();
-				connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+				connect(fileJob, &KIO::FileJob::fileClosed, [=] {
 					fileJobBasedFileNode->m_stat.st_size = sharedState->value.st_size;
 					markOperationCompleted(FUSE_SET_ATTR_SIZE);
 				});
@@ -1231,7 +1231,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 				if(off_t(offset) != off)
 				{
 					fileJob->close();
-					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, &KIO::FileJob::fileClosed, [=] {
 						fuse_reply_err(req, EIO);
 					});
 					return;
@@ -1257,7 +1257,7 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 						return;
 					}
 					fileJob->close();
-					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, &KIO::FileJob::fileClosed, [=] {
 						fuse_reply_buf(req, buffer.constData(), buffer.size());
 					});
 				});
@@ -1353,7 +1353,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 				Q_UNUSED(job);
 				if (off_t(offset) != off) {
 					fileJob->close();
-					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, &KIO::FileJob::fileClosed, [=] {
 						fuse_reply_err(req, EIO);
 					});
 					return;
@@ -1372,7 +1372,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 						return;
 					}
 					fileJob->close();
-					fileJob->connect(fileJob, qOverload<KIO::Job*>(&KIO::FileJob::close), [=] {
+					fileJob->connect(fileJob, &KIO::FileJob::fileClosed, [=] {
 						// Wait till we've flushed first...
 						remoteNode->m_stat.st_size = std::max(off_t(offset + data.size()), remoteNode->m_stat.st_size);
 						fuse_reply_write(req, data.size());

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(Qt5_MIN_VERSION 5.12)
 # Use ecm_generate_dbus_service_file + ecm_install_configured_files once bumped to 5.73+
-set(KF5_MIN_VERSION 5.66)
+set(KF5_MIN_VERSION 5.79)
 
 find_package(ECM ${KF5_MIN_VERSION} CONFIG REQUIRED)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
