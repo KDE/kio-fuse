@@ -17,11 +17,12 @@
 #include "kiofusevfs.h"
 
 const QStringList KIOFuseService::m_blacklist {
-    QStringLiteral("gdrive"), // @see #1
-    QStringLiteral("mtp"), // @see #2
-    // http(s) is buggy and gives back invalid sizes (similar to gdrive).
-    QStringLiteral("https"),
-    QStringLiteral("http")
+	QStringLiteral("gdrive"),  // @see #1
+	QStringLiteral("mtp"), // @see #2
+	// http(s) is buggy and gives back invalid sizes (similar to gdrive).
+	QStringLiteral("https"),
+	QStringLiteral("http"),
+	QStringLiteral("admin"),
 };
 
 KIOFuseService::~KIOFuseService()
