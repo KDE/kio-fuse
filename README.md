@@ -106,8 +106,11 @@ allows one to communicate with the `kio-fuse` process.
 
 Let's assume you want to make the files at
 `ftp://user:password@server/directory` accessible in your local file system.
-To send the corresponding mount command, type the following in the command line:
-
+To send the corresponding mount command, you can use our utility script [`utils/mount-url.sh`](./utils/mount-url.sh) as follows:
+```
+mount-url.sh ftp://user:password@server/directory
+```
+Alternatively, you can simply use `dbus-send` (which is what `mount-url.sh` uses anyway):
 ```
 dbus-send --session --print-reply --type=method_call \
           --dest=org.kde.KIOFuse \
