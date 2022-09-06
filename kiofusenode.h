@@ -35,6 +35,7 @@ public:
 	QString m_nodeName;
 	// TODO: nlink of directories (./..)?
 	struct stat m_stat;
+	Q_DISABLE_COPY(KIOFuseNode)
 };
 
 // Base class for all nodes representing a directory
@@ -42,6 +43,7 @@ class KIOFuseDirNode : public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
 	std::vector<fuse_ino_t> m_childrenInos;
+	Q_DISABLE_COPY(KIOFuseDirNode)
 };
 
 // Used for automated testing of expiration.
