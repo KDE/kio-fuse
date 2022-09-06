@@ -131,7 +131,7 @@ static bool sane_read(int fd, void *buf, size_t count)
 	return true;
 }
 
-static bool operator <(const struct timespec &a, const struct timespec &b)
+static bool operator <(struct timespec a, struct timespec b)
 {
 	return (a.tv_sec == b.tv_sec) ? (a.tv_nsec < b.tv_nsec) : (a.tv_sec < b.tv_sec);
 }
