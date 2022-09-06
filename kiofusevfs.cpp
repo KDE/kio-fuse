@@ -302,7 +302,7 @@ void KIOFuseVFS::mountUrl(const QUrl &url, const std::function<void (const QStri
 	auto statJob = KIO::stat(url);
 	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
 	                                            // files over plain HTTP
-	connect(statJob, &KIO::StatJob::result, [=] {
+	connect(statJob, &KIO::StatJob::result, this, [=] {
 		if(statJob->error())
 		{
 			qDebug(KIOFUSE_LOG) << statJob->errorString();
@@ -338,7 +338,7 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 	auto statJob = KIO::stat(url);
 	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
 	                                            // files over plain HTTP
-	connect(statJob, &KIO::StatJob::result, [=] {
+	connect(statJob, &KIO::StatJob::result, this, [=] {
 		if(statJob->error())
 		{
 			qDebug(KIOFUSE_LOG) << statJob->errorString();
@@ -748,7 +748,7 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 	auto url = addPathElements(that->remoteUrl(node), {nameStr});
 	auto *job = KIO::put(url, mode & ~S_IFMT);
 	// Not connecting to the dataReq signal at all results in an empty file
-	that->connect(job, &KIO::SimpleJob::finished, [=] {
+	that->connect(job, &KIO::SimpleJob::finished, that, [=] {
 		if(job->error())
 		{
 			fuse_reply_err(req, kioErrorToFuseError(job->error()));
@@ -784,7 +784,7 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 	auto namestr = QString::fromUtf8(name);
 	auto url = addPathElements(that->remoteUrl(node), {namestr});
 	auto *job = KIO::mkdir(url, mode & ~S_IFMT);
-	that->connect(job, &KIO::SimpleJob::finished, [=] {
+	that->connect(job, &KIO::SimpleJob::finished, that, [=] {
 		if(job->error())
 		{
 			fuse_reply_err(req, kioErrorToFuseError(job->error()));
@@ -857,7 +857,7 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 	}
 
 	auto *job = KIO::del(that->remoteUrl(node));
-	that->connect(job, &KIO::SimpleJob::finished, [=] {
+	that->connect(job, &KIO::SimpleJob::finished, that, [=] {
 		if(job->error())
 		{
 			fuse_reply_err(req, kioErrorToFuseError(job->error()));
@@ -923,7 +923,7 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 	auto namestr = QString::fromUtf8(name);
 	auto url = addPathElements(that->remoteUrl(node), {namestr});
 	auto *job = KIO::symlink(target, url);
-	that->connect(job, &KIO::SimpleJob::finished, [=] {
+	that->connect(job, &KIO::SimpleJob::finished, that, [=] {
 		if(job->error())
 		{
 			fuse_reply_err(req, kioErrorToFuseError(job->error()));
@@ -1013,7 +1013,7 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 	     newUrl = addPathElements(that->remoteUrl(remoteNewParent), {newNameStr});
 
 	auto *job = KIO::rename(url, newUrl, (flags & RENAME_NOREPLACE) ? KIO::DefaultFlags : KIO::Overwrite);
-	that->connect(job, &KIO::SimpleJob::finished, [=] {
+	that->connect(job, &KIO::SimpleJob::finished, that, [=] {
 		if(job->error())
 			fuse_reply_err(req, kioErrorToFuseError(job->error()));
 		else
@@ -2074,7 +2074,7 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		// List the remote dir
 		auto refreshTime = std::chrono::steady_clock::now();
 		auto *job = KIO::listDir(remoteUrl(remoteNode));
-		connect(job, &KIO::ListJob::entries, [=](auto *job, const KIO::UDSEntryList &entries) {
+		connect(job, &KIO::ListJob::entries, this, [=](auto *job, const KIO::UDSEntryList &entries) {
 			for(auto &entry : entries)
 			{
 				// Inside the loop because refreshing "." might drop it
@@ -2118,7 +2118,7 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 				insertNode(childrenNode);
 			}
 		});
-		connect(job, &KIO::ListJob::result, [=] {
+		connect(job, &KIO::ListJob::result, this, [=] {
 			remoteNode->m_childrenRequested = false;
 
 			if(job->error() && job->error() != KJob::KilledJobError)
@@ -2198,7 +2198,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedF
 		job->setTotalSize(node->m_cacheSize);
 
 		off_t bytesSent = 0; // Modified inside the lambda
-		connect(job, &KIO::TransferJob::dataReq, [=](auto *job, QByteArray &data) mutable {
+		connect(job, &KIO::TransferJob::dataReq, this, [=](auto *job, QByteArray &data) mutable {
 			Q_UNUSED(job);
 
 			// Someone truncated the file?
@@ -2232,7 +2232,7 @@ void KIOFuseVFS::awaitNodeFlushed(const std::shared_ptr<KIOFuseRemoteCacheBasedF
 
 			bytesSent += toSend;
 		});
-		connect(job, &KIO::TransferJob::result, [=] {
+		connect(job, &KIO::TransferJob::result, this, [=] {
 			node->m_flushRunning = false;
 
 			if(job->error())
@@ -2319,7 +2319,7 @@ void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &
 	auto statJob = KIO::stat(url);
 	statJob->setSide(KIO::StatJob::SourceSide); // Be "optimistic" to allow accessing
 	                                            // files over plain HTTP
-	connect(statJob, &KIO::StatJob::result, [=] {
+	connect(statJob, &KIO::StatJob::result, this, [=] {
 		if(statJob->error())
 		{
 			qDebug(KIOFUSE_LOG) << statJob->errorString();
