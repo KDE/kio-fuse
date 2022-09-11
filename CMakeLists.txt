@@ -32,50 +32,10 @@ find_package(KF${QT_MAJOR_VERSION} ${KF_MIN_VERSION} REQUIRED COMPONENTS
 )
 pkg_check_modules(FUSE3 REQUIRED fuse3)
 
+add_subdirectory(src)
+add_subdirectory(data)
 if(BUILD_TESTING)
 	add_subdirectory(tests)
-endif()
-
-set(KIOFUSE_SOURCES
-	main.cpp
-	kiofusevfs.cpp
-	kiofusevfs.h
-	kiofuseservice.cpp
-	kiofuseservice.h
-	kiofusenode.h)
-
-ecm_setup_version(PROJECT
-	VARIABLE_PREFIX KIOFUSE
-	VERSION_HEADER kiofuseversion.h)
-
-ecm_qt_declare_logging_category(KIOFUSE_SOURCES
-	HEADER debug.h
-	IDENTIFIER KIOFUSE_LOG
-	CATEGORY_NAME org.kde.kio.fuse
-	DEFAULT_SEVERITY Warning)
-
-add_executable(kio-fuse ${KIOFUSE_SOURCES})
-target_include_directories(kio-fuse PRIVATE ${FUSE3_INCLUDE_DIRS})
-target_compile_definitions(kio-fuse PRIVATE FUSE_USE_VERSION=31 ${FUSE3_CFLAGS_OTHER})
-target_link_libraries(kio-fuse PRIVATE Qt::Core KF${QT_MAJOR_VERSION}::KIOCore ${FUSE3_LIBRARIES} ${FUSE3_LDFLAGS})
-install(TARGETS kio-fuse DESTINATION ${KDE_INSTALL_FULL_LIBEXECDIR})
-if(CMAKE_SYSTEM_NAME MATCHES "Linux")
-	# We could argue that this needs a separate "if(LINUX_WITH_TMPFILES_D)".
-	# or a "if(LINUX_WITH_SYSTEMD)".
-	install(FILES kio-fuse-tmpfiles.conf DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/tmpfiles.d)
-endif()
-
-ecm_generate_dbus_service_file(
-   NAME org.kde.KIOFuse
-   EXECUTABLE "${KDE_INSTALL_FULL_LIBEXECDIR}/kio-fuse -f"
-   SYSTEMD_SERVICE kio-fuse.service
-   DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR}
-)
-
-if(DEFINED KDE_INSTALL_SYSTEMDUSERUNITDIR)
-	ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${KDE_INSTALL_SYSTEMDUSERUNITDIR})
-else()
-	ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${SYSTEMD_USER_UNIT_INSTALL_DIR})
 endif()
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
