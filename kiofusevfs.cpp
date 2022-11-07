@@ -320,7 +320,9 @@ void KIOFuseVFS::mountUrl(const QUrl &url, const std::function<void (const QStri
 QStringList KIOFuseVFS::mapUrlToVfs(const QUrl &url)
 {
 	// Build the path where it will appear in the VFS
-	auto targetPathComponents = QStringList{url.scheme(), url.authority()};
+	auto urlWithoutPassword = url;
+	urlWithoutPassword.setPassword({});
+	auto targetPathComponents = QStringList{urlWithoutPassword.scheme(), urlWithoutPassword.authority()};
 	targetPathComponents.append(url.path().split(QLatin1Char('/')));
 
 	// Strip empty path elements, for instance in
