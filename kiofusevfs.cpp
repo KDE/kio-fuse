@@ -297,6 +297,21 @@ void KIOFuseVFS::setUseFileJob(bool useFileJob)
 
 void KIOFuseVFS::mountUrl(const QUrl &url, const std::function<void (const QString &, int)> &callback)
 {
+	qDebug(KIOFUSE_LOG) << "Trying to mount" << url;
+
+	if(!url.isValid()) {
+		qDebug(KIOFUSE_LOG) << "Got invalid URL";
+		return callback({}, EINVAL);
+	}
+
+	const auto vfsPath = mapUrlToVfs(url).join(QLatin1Char('/'));
+	// If it's not mounted, this returns an empty QUrl.
+	// Checking with the target URL is done to detect password changes.
+	if(localPathToRemoteUrl(vfsPath) == url) {
+		qDebug(KIOFUSE_LOG) << "Already mounted";
+		return callback(vfsPath, 0);
+	}
+
 	// First make sure it actually exists
 	qDebug(KIOFUSE_LOG) << "Stating" << url.toDisplayString() << "for mount";
 	auto statJob = KIO::stat(url);
