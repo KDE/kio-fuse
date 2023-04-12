@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 
 #include <QDBusConnection>
+#include <QDBusServer>
 #include <QStandardPaths>
 #include <QDir>
 
@@ -32,7 +33,7 @@ KIOFuseService::~KIOFuseService()
 	kiofusevfs.stop();
 }
 
-bool KIOFuseService::start(struct fuse_args &args, const QString &mountpoint, bool foreground)
+bool KIOFuseService::start(struct fuse_args &args, const QString &mountpoint, bool foreground, const QString &peerAddress)
 {
 	if(!m_mountpoint.isEmpty())
 	{
@@ -58,6 +59,17 @@ bool KIOFuseService::start(struct fuse_args &args, const QString &mountpoint, bo
 
 	if(!kiofusevfs.start(args, m_mountpoint))
 		return false;
+
+	if(!peerAddress.isEmpty())
+	{
+		m_dbusServer = new QDBusServer(peerAddress, this);
+		m_dbusServer->setAnonymousAuthenticationAllowed(true);
+		connect(m_dbusServer, &QDBusServer::newConnection, this, [this](const QDBusConnection &conn) {
+			QDBusConnection connection = conn;
+			connection.registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
+			                          QDBusConnection::ExportAllSlots | QDBusConnection::ExportAdaptors);
+		});
+	}
 
 	if(foreground)
 		return registerService();
@@ -100,6 +112,7 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 {
 	message.setDelayedReply(true);
 	QUrl url = QUrl::fromUserInput(remoteUrl);
+	QDBusConnection connection = this->connection();
 	if(m_blacklist.contains(url.scheme()))
 	{
 		url.setPassword({}); // Lets not give back passwords in plaintext...
@@ -107,7 +120,7 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 			QStringLiteral("org.kde.KIOFuse.VFS.Error.SchemeNotSupported"),
 			QStringLiteral("KIOFuse does not suport mounting of URLs with a scheme of %1").arg(url.scheme())
 		);
-		QDBusConnection::sessionBus().send(errorReply);
+		connection.send(errorReply);
 		return QString();
 	}
 	kiofusevfs.mountUrl(url, [=] (auto path, int error) {
@@ -119,18 +132,21 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 				QStringLiteral("org.kde.KIOFuse.VFS.Error.CannotMount"),
 				QStringLiteral("KIOFuse failed to mount %1: %2").arg(displayUrl.toString(), QLatin1String(strerror(error)))
 			);
-			QDBusConnection::sessionBus().send(errorReply);
+			connection.send(errorReply);
 			return;
 		}
 
 		QString localPath = {m_mountpoint + QLatin1Char('/') + path};
-		QDBusConnection::sessionBus().send(message.createReply() << localPath);
+		connection.send(message.createReply() << localPath);
 	});
 	return QString();
 }
 
 bool KIOFuseService::registerService()
 {
+	if(m_dbusServer)
+		return true;
+
 	if(QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
 	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAdaptors)
 	    && QDBusConnection::sessionBus().registerService(QStringLiteral("org.kde.KIOFuse")))

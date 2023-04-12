@@ -17,6 +17,8 @@
 
 #include "kiofusevfs.h"
 
+class QDBusServer;
+
 class KIOFuseServicePrivate : public QDBusAbstractAdaptor {
 	Q_OBJECT
 	Q_CLASSINFO("D-Bus Interface", "org.kde.KIOFuse.Private")
@@ -38,7 +40,7 @@ public:
 	virtual ~KIOFuseService();
 	/** Attempts to register the service and start kiofusevfs. If both succeed,
 	  * returns true, false otherwise. */
-	bool start(struct fuse_args &args, const QString &mountpoint, bool foreground);
+	bool start(struct fuse_args &args, const QString &mountpoint, bool foreground, const QString &peerAddress);
 	KIOFuseVFS kiofusevfs;
 
 public Q_SLOTS:
@@ -66,4 +68,6 @@ private:
 	static const QStringList m_blacklist;
 	/** DBus Adaptor exported as org.kde.KIOFuse.Private interface. */
 	KIOFuseServicePrivate m_privateInterface{this};
+
+	QDBusServer *m_dbusServer = nullptr;
 };

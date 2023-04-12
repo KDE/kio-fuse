@@ -16,12 +16,14 @@
 // @see https://github.com/libfuse/libfuse/wiki/Option-Parsing
 struct kiofuse_config {
 	int useFileJob = 1; // on by default
+	char *peerAddress = nullptr;
 };
 
 #define KIOFUSE_OPT(t, p, v) { t, offsetof(struct kiofuse_config, p), v }
 
 static struct fuse_opt kiofuse_opts[] = {
 	KIOFUSE_OPT("--disable-filejob-io", useFileJob, 0),
+	KIOFUSE_OPT("--peer=%s", peerAddress, 0),
 	FUSE_OPT_END
 };
 
@@ -43,6 +45,7 @@ int main(int argc, char *argv[])
 		fuse_cmdline_help();
 		fuse_lowlevel_help();
 		printf("    --disable-filejob-io   Don't use FileJob-based (KIO::open) I/O\n");
+		printf("    --peer=ADDRESS         Start D-Bus server at ADDRESS instead of using session bus\n");
 		return 0;
 	}
 	else if (opts.show_version)
@@ -60,7 +63,8 @@ int main(int argc, char *argv[])
 	KAboutData::setApplicationData(about);
 
 	kiofuseservice.kiofusevfs.setUseFileJob(conf.useFileJob);
-	if(!kiofuseservice.start(args, QString::fromUtf8(opts.mountpoint), opts.foreground))
+	const QString peerAddress = conf.peerAddress ? QString::fromUtf8(conf.peerAddress) : QString();
+	if(!kiofuseservice.start(args, QString::fromUtf8(opts.mountpoint), opts.foreground, peerAddress))
 		return 1;
 
 	fuse_opt_free_args(&args);

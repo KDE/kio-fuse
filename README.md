@@ -123,6 +123,15 @@ succeeded, you will get the location that the URL is mounted on as a reply. In
 this case it would be `$dir/ftp/user@server/directory` and the directory will be
 accessibly at that URL.
 
+Alternatively you can run KIO FUSE with its own D-Bus server which doesn't require
+session bus: `kio-fuse --peer=unix:path=$socketpath -d $dir`.
+And then use `dbus-send` this way:
+```
+dbus-send --peer=unix:path=$socketpath --print-reply --type=method_call \
+          /org/kde/KIOFuse \
+          org.kde.KIOFuse.VFS.mountUrl string:ftp://user:password@server/directory
+```
+
 After your work is done, simply run `fusermount3 -u $dir` to unmount the URL and
 exit `kio-fuse`.
 
