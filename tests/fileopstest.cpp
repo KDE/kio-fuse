@@ -1031,7 +1031,7 @@ void FileOpsTest::testReadWrite4GBFile()
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
 {
-	return QDateTime::fromTime_t(dt.toTime_t());
+	return dt.addMSecs(-dt.time().msec());
 }
 
 bool FileOpsTest::forceNodeTimeout()

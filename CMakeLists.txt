@@ -5,12 +5,13 @@ project(kio-fuse VERSION 5.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(Qt5_MIN_VERSION 5.12)
-set(KF5_MIN_VERSION 5.96)
+set(QT_MIN_VERSION 5.15)
+set(KF_MIN_VERSION 5.96)
 
-find_package(ECM ${KF5_MIN_VERSION} CONFIG REQUIRED)
+find_package(ECM ${KF_MIN_VERSION} CONFIG REQUIRED)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
 
+include(QtVersionOption)
 include(ECMSetupVersion)
 include(ECMGenerateHeaders)
 include(CMakePackageConfigHelpers)
@@ -24,8 +25,8 @@ include(ECMGenerateDBusServiceFile)
 include(ECMConfiguredInstall)
 
 find_package(PkgConfig REQUIRED)
-find_package(Qt5 ${Qt5_MIN_VERSION} COMPONENTS Core REQUIRED)
-find_package(KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS
+find_package(Qt${QT_MAJOR_VERSION} ${QT_MIN_VERSION} COMPONENTS Core REQUIRED)
+find_package(KF${QT_MAJOR_VERSION} ${KF_MIN_VERSION} REQUIRED COMPONENTS
 	CoreAddons
 	KIO
 )
@@ -56,7 +57,7 @@ ecm_qt_declare_logging_category(KIOFUSE_SOURCES
 add_executable(kio-fuse ${KIOFUSE_SOURCES})
 target_include_directories(kio-fuse PRIVATE ${FUSE3_INCLUDE_DIRS})
 target_compile_definitions(kio-fuse PRIVATE FUSE_USE_VERSION=31 ${FUSE3_CFLAGS_OTHER})
-target_link_libraries(kio-fuse PRIVATE Qt5::Core KF5::KIOCore ${FUSE3_LIBRARIES} ${FUSE3_LDFLAGS})
+target_link_libraries(kio-fuse PRIVATE Qt::Core KF${QT_MAJOR_VERSION}::KIOCore ${FUSE3_LIBRARIES} ${FUSE3_LDFLAGS})
 install(TARGETS kio-fuse DESTINATION ${KDE_INSTALL_FULL_LIBEXECDIR})
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 	# We could argue that this needs a separate "if(LINUX_WITH_TMPFILES_D)".
@@ -71,6 +72,10 @@ ecm_generate_dbus_service_file(
    DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR}
 )
 
-ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${SYSTEMD_USER_UNIT_INSTALL_DIR})
+if(DEFINED KDE_INSTALL_SYSTEMDUSERUNITDIR)
+	ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${KDE_INSTALL_SYSTEMDUSERUNITDIR})
+else()
+	ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${SYSTEMD_USER_UNIT_INSTALL_DIR})
+endif()
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
