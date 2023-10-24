@@ -683,7 +683,7 @@ void FileOpsTest::testArchiveOps()
 
 void FileOpsTest::testManWorkaround()
 {
-	// The man ioslave has "hybrid" directories which stat as regular files but also support
+	// The man ioworker has "hybrid" directories which stat as regular files but also support
 	// listDir. This behaviour is not supported and mounting has to fail.
 
 	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("man")))

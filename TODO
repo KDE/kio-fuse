@@ -4,8 +4,8 @@ Filesystem features:
   * statvfs (?)
   * interrupting requests (just killing the KIO Job would also break other requests for the
     same resource)
-KIO Slave support:
-- Deal with invalid size reporting slaves (http/gdrive/...)?
+KIO Worker support:
+- Deal with workers reporting invalid sizes (http/gdrive/...)?
 Performance/usability improvements:
 - Better error reporting:
   * Flushing happens on close(), which can't report errors, so it might be a good idea to show

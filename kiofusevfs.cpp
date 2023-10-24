@@ -412,7 +412,7 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 				return callback({}, EIO);
 			}
 
-			// Some ioslaves like man:/ implement "index files" for folders (including /) by making
+			// Some ioworkers like man:/ implement "index files" for folders (including /) by making
 			// them look as regular file when stating, but they also support listDir for directory
 			// functionality. This behaviour is not compatible, so just reject it outright.
 			if((url.path().isEmpty() || url.path() == QStringLiteral("/"))
@@ -1375,7 +1375,7 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 					});
 					return;
 				}
-				// Limit write to avoid killing the slave.
+				// Limit write to avoid killing the worker.
 				// @see https://phabricator.kde.org/D15448
 				fileJob->write(data.left(0xFFFFFF));
 				off_t bytesLeft = size;
@@ -2478,7 +2478,7 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_CANNOT_RENAME                : return EIO;
 		case KIO::ERR_CANNOT_CHMOD                 : return EIO;
 		case KIO::ERR_CANNOT_DELETE                : return EIO;
-		case KIO::ERR_SLAVE_DIED                   : return EIO;
+		case KIO::ERR_WORKER_DIED                  : return EIO;
 		case KIO::ERR_OUT_OF_MEMORY                : return ENOMEM;
 		case KIO::ERR_UNKNOWN_PROXY_HOST           : return EHOSTUNREACH;
 		case KIO::ERR_CANNOT_AUTHENTICATE          : return EACCES;
@@ -2497,7 +2497,7 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_NO_CONTENT                   : return EIO;
 		case KIO::ERR_DISK_FULL                    : return ENOSPC;
 		case KIO::ERR_IDENTICAL_FILES              : return EEXIST;
-		case KIO::ERR_SLAVE_DEFINED                : return EIO;
+		case KIO::ERR_WORKER_DEFINED               : return EIO;
 		case KIO::ERR_UPGRADE_REQUIRED             : return EPROTOTYPE;
 		case KIO::ERR_POST_DENIED                  : return EACCES;
 		case KIO::ERR_CANNOT_SEEK                  : return EIO;
@@ -2507,7 +2507,7 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_DROP_ON_ITSELF               : return EINVAL;
 		case KIO::ERR_CANNOT_MOVE_INTO_ITSELF      : return EINVAL;
 		case KIO::ERR_PASSWD_SERVER                : return EIO;
-		case KIO::ERR_CANNOT_CREATE_SLAVE          : return EIO;
+		case KIO::ERR_CANNOT_CREATE_WORKER         : return EIO;
 		case KIO::ERR_FILE_TOO_LARGE_FOR_FAT32     : return EFBIG;
 		case KIO::ERR_OWNER_DIED                   : return EIO;
 		default                                    : return EIO;

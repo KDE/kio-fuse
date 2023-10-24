@@ -8,8 +8,8 @@ first to learn about the external interface.
 KIO FUSE's design is based on these requirements:
 
 * Maximum compatibility with applications (as far as KIO allows).
-* Work with most slaves: The minimum set of operations a slave must support are
-  `KIO::stat` and `KIO::get`.
+* Work with most protocols: The minimum set of operations a worker must support
+  are `KIO::stat` and `KIO::get`.
 * Good usability: this means mostly acceptable speed (using caching whereever
   possible), but also having a simple API to the outside world.
 * Security: the password of mounted URLs is not obviously visible.
@@ -130,7 +130,7 @@ FUSE filesystem. The first step is to verify that the target actually exists,
 if that is not the case an error is returned without doing any changes.
 
 If the target is reachable, the next step is to find which part of the URL
-(from left to right) is the first accessible one. This is needed as ioslaves
+(from left to right) is the first accessible one. This is needed as ioworkers
 like `tar` do not support listing `tar:///` and instead need some part of the path
 to return results. This minimum URL is the "origin" and a `KIOFuseRemoteDirNode`
 with the origin as `m_overrideUrl` is created, with the parents as plain
@@ -272,4 +272,4 @@ Hardlinks are not supported well in the current design of KIO so they were
 simply not considered during KIO FUSE development either.
 
 While inode and device numbers can be returned are part of UDSEntries returned
-from slaves, neither `stat.st_link` nor `::link` are accessible.
+from workers, neither `stat.st_link` nor `::link` are accessible.
