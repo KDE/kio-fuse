@@ -51,6 +51,7 @@ private Q_SLOTS:
 	void testTypeRefresh();
 	void testDirSymlink();
 	void testSymlinkRewrite();
+	void testNonemptyRmdir();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -989,6 +990,27 @@ void FileOpsTest::testSymlinkRewrite()
 
 	QCOMPARE(readlink(mirrorDir.filePath(QStringLiteral("symlink2"))),
 	         QDir(reply).filePath(QStringLiteral("somewhere")));
+}
+
+void FileOpsTest::testNonemptyRmdir()
+{
+	QTemporaryDir localTmpDir;
+	QVERIFY(localTmpDir.isValid());
+	QDir localDir(localTmpDir.path());
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	QDir mirrorDir(reply);
+	QVERIFY(mirrorDir.exists());
+
+	// Create a directory structure inside
+	localDir.mkpath(QStringLiteral("outer/inner"));
+
+	// Attempt to rmdir "outer" while "inner" exists inside.
+	QCOMPARE(rmdir(qPrintable(mirrorDir.filePath(QStringLiteral("outer")))), -1);
+	QCOMPARE(errno, ENOTEMPTY);
 }
 
 #ifdef WASTE_DISK_SPACE

@@ -873,8 +873,10 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 		}
 	}
 
-	auto *job = KIO::del(that->remoteUrl(node));
-	that->connect(job, &KIO::SimpleJob::finished, that, [=] {
+	auto remoteUrl = that->remoteUrl(node);
+	// Use KIO::rmdir to ensure that the directory is really empty (kde#482902)
+	auto *job = isDirectory ? static_cast<KIO::Job*>(KIO::rmdir(remoteUrl)) : KIO::del(remoteUrl);
+	that->connect(job, &KIO::Job::finished, that, [=] {
 		if(job->error())
 		{
 			fuse_reply_err(req, kioErrorToFuseError(job->error()));
@@ -2473,7 +2475,7 @@ int KIOFuseVFS::kioErrorToFuseError(const int kioError) {
 		case KIO::ERR_CANNOT_STAT                  : return EIO;
 		case KIO::ERR_CANNOT_CLOSEDIR              : return EIO;
 		case KIO::ERR_CANNOT_MKDIR                 : return EIO;
-		case KIO::ERR_CANNOT_RMDIR                 : return EIO;
+		case KIO::ERR_CANNOT_RMDIR                 : return ENOTEMPTY;
 		case KIO::ERR_CANNOT_RESUME                : return ECONNABORTED;
 		case KIO::ERR_CANNOT_RENAME                : return EIO;
 		case KIO::ERR_CANNOT_CHMOD                 : return EIO;
