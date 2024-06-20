@@ -321,14 +321,16 @@ void KIOFuseVFS::mountUrl(const QUrl &url, const std::function<void (const QStri
 		if(statJob->error())
 		{
 			qDebug(KIOFUSE_LOG) << statJob->errorString();
-			return callback({}, kioErrorToFuseError(statJob->error()));
+			callback({}, kioErrorToFuseError(statJob->error()));
+			return;
 		}
 
 		// The file exists, try to mount it
 		auto pathElements = url.path().split(QLatin1Char('/'));
 		pathElements.removeAll({});
 
-		return findAndCreateOrigin(originOfUrl(url), pathElements, callback);
+		findAndCreateOrigin(originOfUrl(url), pathElements, callback);
+		return;
 	});
 }
 
@@ -361,10 +363,14 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 			qDebug(KIOFUSE_LOG) << statJob->errorString();
 
 			if(!pathElements.isEmpty())
-				return findAndCreateOrigin(addPathElements(url, pathElements.mid(0, 1)), pathElements.mid(1), callback);
+			{
+				findAndCreateOrigin(addPathElements(url, pathElements.mid(0, 1)), pathElements.mid(1), callback);
+				return;
+			}
 
 			qDebug(KIOFUSE_LOG) << "Creating origin failed";
-			return callback({}, kioErrorToFuseError(statJob->error()));
+			callback({}, kioErrorToFuseError(statJob->error()));
+			return;
 		}
 
 		qDebug(KIOFUSE_LOG) << "Origin found at" << url.toDisplayString();
@@ -396,7 +402,8 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 			else if(!nextDirNode)
 			{
 				qWarning(KIOFUSE_LOG) << "Node" << nextNode->m_nodeName << "not a dir?";
-				return callback({}, EIO);
+				callback({}, EIO);
+				return;
 			}
 
 			currentNode = nextDirNode;
@@ -409,7 +416,8 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 			if(!finalNode)
 			{
 				qWarning(KIOFUSE_LOG) << "Unable to create a valid final node for" << url.toDisplayString() << "from its UDS Entry";
-				return callback({}, EIO);
+				callback({}, EIO);
+				return;
 			}
 
 			// Some ioworkers like man:/ implement "index files" for folders (including /) by making
@@ -429,11 +437,13 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 		if(!originNode)
 		{
 			qWarning(KIOFUSE_LOG) << "Origin" << finalNode->m_nodeName << "exists but not a remote node?";
-			return callback({}, EIO);
+			callback({}, EIO);
+			return;
 		}
 
 		originNode->m_overrideUrl = url; // Allow the user to change the password
-		return callback((targetPathComponents + pathElements).join(QLatin1Char('/')), 0);
+		callback((targetPathComponents + pathElements).join(QLatin1Char('/')), 0);
+		return;
 	});
 }
 
@@ -465,7 +475,7 @@ void KIOFuseVFS::getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		return;
 	}
 
-	return that->awaitAttrRefreshed(node, [=] (int error) {
+	that->awaitAttrRefreshed(node, [=] (int error) {
 		Q_UNUSED(error); // Just send the old attr...
 		replyAttr(req, node);
 	});
@@ -1412,7 +1422,7 @@ void KIOFuseVFS::flush(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 	// to do writeback here. I can't think of a better alternative though -
 	// doing it only on fsync and the final forget seems like a bit too late.
 
-	return KIOFuseVFS::fsync(req, ino, 1, fi);
+	KIOFuseVFS::fsync(req, ino, 1, fi);
 }
 
 void KIOFuseVFS::release(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
@@ -1548,12 +1558,13 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 
 	if(auto child = that->nodeByName(parentDirNode, nodeName)) // Part of the tree?
 	{
-		return that->awaitAttrRefreshed(child, [=](int error) {
+		that->awaitAttrRefreshed(child, [=](int error) {
 			Q_UNUSED(error);
 			// Lookup again, node might've been replaced or deleted
 			auto child = that->nodeByName(parentDirNode, nodeName);
 			that->replyEntry(req, child);
 		});
+		return;
 	}
 
 	auto remoteDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(parentDirNode);
@@ -2068,25 +2079,29 @@ void KIOFuseVFS::awaitBytesAvailable(const std::shared_ptr<KIOFuseRemoteCacheBas
 
 void KIOFuseVFS::awaitCacheComplete(const std::shared_ptr<KIOFuseRemoteCacheBasedFileNode> &node, const std::function<void (int)> &callback)
 {
-	return awaitBytesAvailable(node, std::numeric_limits<off_t>::max(), [callback](int error) {
+	awaitBytesAvailable(node, std::numeric_limits<off_t>::max(), [callback](int error) {
 		// ESPIPE == cache complete, but less than the requested size, which is expected.
-		return callback(error == ESPIPE ? 0 : error);
+		callback(error == ESPIPE ? 0 : error);
 	});
 }
 
 void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &node, const std::function<void (int)> &callback)
 {
 	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(node);
-	if(!remoteNode)
-		return callback(0); // Not a remote node
-
-	if(!remoteNode->haveChildrenTimedOut())
-		return callback(0); // Children complete and up to date
+	if(!remoteNode || !remoteNode->haveChildrenTimedOut())
+	{
+		// Not a remote node or Children complete and up to date
+		callback(0);
+		return;
+	}
 
 	if(!remoteNode->m_childrenRequested)
 	{
 		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
-			return callback(0);
+		{
+			callback(0);
+			return;
+		}
 
 		auto childrenNotSeen = std::make_shared<std::vector<fuse_ino_t>>(remoteNode->m_childrenInos);
 
@@ -2289,14 +2304,20 @@ void KIOFuseVFS::awaitAttrRefreshed(const std::shared_ptr<KIOFuseNode> &node, co
 {
 	auto remoteNode = std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(node);
 	if(!remoteNode || !remoteNode->hasStatTimedOut())
-		return callback(0); // Node not remote, or it hasn't timed out yet
+	{
+		callback(0); // Node not remote, or it hasn't timed out yet
+		return;
+	}
 
 	// To do the same request as the initial mount or lookup, build the URL from the parent
 	auto parentNode = nodeForIno(node->m_parentIno);
 	auto remoteParentNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(parentNode);
 	QUrl url;
 	if(!remoteParentNode || (url = remoteUrl(parentNode)).isEmpty())
-		return callback(0); // Parent not remote
+	{
+		callback(0); // Parent not remote
+		return;
+	}
 
 	if(!remoteNode->m_statRequested)
 	{
@@ -2329,9 +2350,10 @@ void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &
 	if(url.isEmpty()) // Not remote?
 	{
 		if(auto node = nodeByName(parent, name))
-			return callback(node, 0);
+			callback(node, 0);
 		else
-			return callback({}, ENOENT);
+			callback({}, ENOENT);
+		return;
 	}
 
 	qDebug(KIOFUSE_LOG) << "Mounting" << url.toDisplayString();
@@ -2357,7 +2379,10 @@ void KIOFuseVFS::awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &
 			// ignored as it can be different from the path. e.g. tar:/foo.tar/ is "/"
 			finalNode = createNodeFromUDSEntry(statJob->statResult(), parent->m_stat.st_ino, name);
 			if(!finalNode)
-				return callback(nullptr, EIO);
+			{
+				callback(nullptr, EIO);
+				return;
+			}
 
 			insertNode(finalNode);
 		}
@@ -2385,7 +2410,7 @@ bool KIOFuseVFS::setupSignalHandlers()
 	}
 	m_signalNotifier = std::make_unique<QSocketNotifier>(signalFd[1], QSocketNotifier::Read, this);
 	m_signalNotifier->connect(m_signalNotifier.get(), &QSocketNotifier::activated, this, &KIOFuseVFS::exitHandler);
-	
+
 	struct sigaction sig;
 
 	sig.sa_handler = KIOFuseVFS::signalHandler;
