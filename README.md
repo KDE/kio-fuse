@@ -13,6 +13,8 @@ To install build dependencies on Void Linux:
 
     xbps-install -Sy base-devel fuse3 cmake extra-cmake-modules qt5 qt5-devel kio kcoreaddons-devel kcoreaddons kio-devel fuse3 fuse3-devel
 
+(and qt6 build deps, `cmake extra-cmake-modules  kf6-kio kf6-kio-devel base-devel fuse3 fuse3-devel qt6-base qt6-base-devel kf6-kcoreaddons kf6-kcoreaddons-devel`)
+
 (and `kio-extras` for running certain tests)
 
 To install build dependencies on Arch Linux:
