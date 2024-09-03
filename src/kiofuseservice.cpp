@@ -105,7 +105,7 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 		url.setPassword({}); // Lets not give back passwords in plaintext...
 		auto errorReply = message.createErrorReply(
 			QStringLiteral("org.kde.KIOFuse.VFS.Error.SchemeNotSupported"),
-			QStringLiteral("KIOFuse does not suport mounting of URLs with a scheme of %1").arg(url.scheme())
+			QStringLiteral("KIOFuse does not support mounting of URLs with a scheme of %1").arg(url.scheme())
 		);
 		QDBusConnection::sessionBus().send(errorReply);
 		return QString();
