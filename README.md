@@ -11,34 +11,34 @@ Here we describe how to compile, test, run and install KIO FUSE from source.
 
 To install build dependencies on Void Linux:
 
-    xbps-install -Sy base-devel fuse3 cmake extra-cmake-modules qt5 qt5-devel kio kcoreaddons-devel kcoreaddons kio-devel fuse3 fuse3-devel
+    xbps-install -Sy base-devel fuse3 cmake extra-cmake-modules qt6 qt6-devel kio kcoreaddons-devel kcoreaddons kio-devel fuse3 fuse3-devel
 
 (and `kio-extras` for running certain tests)
 
 To install build dependencies on Arch Linux:
 
-    pacman -S base-devel fuse3 cmake extra-cmake-modules qt5base kio
+    pacman -S base-devel fuse3 cmake extra-cmake-modules qt6base kio
 
 (and `kio-extras` for running certain tests)
 
 To install build dependencies on Fedora 32:
 
-    dnf install cmake extra-cmake-modules kf5-kio-devel fuse3-devel 
-    qt5-qtbase-devel pkg-config
+    dnf install cmake extra-cmake-modules kf6-kio-devel fuse3-devel 
+    qt6-qtbase-devel pkg-config
 
 (and `kio-extras` for running certain tests)
 
 To install build dependencies on openSUSE Tumbleweed:
 
-    zypper install extra-cmake-modules 'cmake(KF5KIO)' 'pkgconfig(fuse3)' 
-    kio-devel 'cmake(Qt5Test)' 'cmake(Qt5Dbus)'
+    zypper install extra-cmake-modules 'cmake(KF6KIO)' 'pkgconfig(fuse3)' 
+    kio-devel 'cmake(Qt6Test)' 'cmake(Qt6Dbus)'
 
-(and `kio-extras5` for running certain tests)
+(and `kio-extras6` for running certain tests)
 
-To install build dependencies on Ubuntu 19.04:
+To install build dependencies on Ubuntu:
 
     apt install fuse3 libfuse3-dev build-essential cmake extra-cmake-modules
-    pkg-config libkf5kio-dev
+    pkg-config libkf6kio-dev
 
 (and `kio-extras` for running certain tests)
 
