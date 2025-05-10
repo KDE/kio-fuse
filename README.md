@@ -17,11 +17,11 @@ To install build dependencies on Void Linux:
 
 To install build dependencies on Arch Linux:
 
-    pacman -S base-devel fuse3 cmake extra-cmake-modules qt6base kio
+    pacman -S base-devel fuse3 cmake extra-cmake-modules qt6-base kio
 
 (and `kio-extras` for running certain tests)
 
-To install build dependencies on Fedora 32:
+To install build dependencies on Fedora:
 
     dnf install cmake extra-cmake-modules kf6-kio-devel fuse3-devel 
     qt6-qtbase-devel pkg-config
@@ -33,7 +33,7 @@ To install build dependencies on openSUSE Tumbleweed:
     zypper install extra-cmake-modules 'cmake(KF6KIO)' 'pkgconfig(fuse3)' 
     kio-devel 'cmake(Qt6Test)' 'cmake(Qt6Dbus)'
 
-(and `kio-extras6` for running certain tests)
+(and `kio-extras` for running certain tests)
 
 To install build dependencies on Ubuntu:
 
