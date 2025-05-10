@@ -31,7 +31,7 @@ To install build dependencies on Fedora:
 To install build dependencies on openSUSE Tumbleweed:
 
     zypper install extra-cmake-modules 'cmake(KF6KIO)' 'pkgconfig(fuse3)' 
-    kio-devel 'cmake(Qt6Test)' 'cmake(Qt6Dbus)'
+    kf6-kio 'cmake(Qt6Test)' 'cmake(Qt6Dbus)'
 
 (and `kio-extras` for running certain tests)
 
