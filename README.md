@@ -11,7 +11,7 @@ Here we describe how to compile, test, run and install KIO FUSE from source.
 
 To install build dependencies on Void Linux:
 
-    xbps-install -Sy base-devel fuse3 cmake extra-cmake-modules qt6 qt6-devel kio kcoreaddons-devel kcoreaddons kio-devel fuse3 fuse3-devel
+    xbps-install -Sy base-devel fuse3 cmake extra-cmake-modules qt6 qt6-base-devel kio kcoreaddons-devel kcoreaddons kio-devel fuse3 fuse3-devel
 
 (and `kio-extras` for running certain tests)
 
