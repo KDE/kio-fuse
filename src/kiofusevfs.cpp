@@ -1763,6 +1763,7 @@ void KIOFuseVFS::markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node)
 	qDebug(KIOFUSE_LOG) << "Marking node" << node->m_nodeName << "as deleted";
 
 	reparentNode(node, KIOFuseIno::DeletedRoot);
+	node->m_stat.st_nlink = 0; // Node is no longer linked anywhere
 	decrementLookupCount(node, 0); // Trigger reevaluation
 }
 
