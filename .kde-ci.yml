@@ -10,6 +10,4 @@ Dependencies:
     'frameworks/extra-cmake-modules': '@latest-kf6'
     'frameworks/kcoreaddons' : '@latest-kf6'
     'frameworks/kio' : '@latest-kf6'
-
-Options:
-  run-tests: False
+    'network/kio-extras': '@latest-kf6'
