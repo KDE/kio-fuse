@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <chrono>
+#include <poll.h>
 
 #ifdef Q_OS_LINUX
 #include <linux/fs.h>
@@ -208,7 +209,13 @@ bool KIOFuseVFS::start(struct fuse_args &args, const QString& mountpoint)
 
 	// Set the FD to O_NONBLOCK so that it can be read in a loop until empty
 	int flags = fcntl(fusefd, F_GETFL);
-	fcntl(fusefd, F_SETFL, flags | O_NONBLOCK);
+	if (fcntl(fusefd, F_SETFL, flags | O_NONBLOCK) < 0)
+	{
+		// FreeBSD does not support setting O_NONBLOCK on /dev/fuse after opening.
+		// (https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=265736#c4)
+		qWarning(KIOFUSE_LOG) << "Failed to set FUSE FD to O_NONBLOCK, falling back to polling";
+		m_fusefdNeedsPoll = true;
+	}
 
 	m_fuseNotifier = std::make_unique<QSocketNotifier>(fusefd, QSocketNotifier::Read, this);
 	m_fuseNotifier->connect(m_fuseNotifier.get(), &QSocketNotifier::activated, this, &KIOFuseVFS::fuseRequestPending);
@@ -272,6 +279,21 @@ void KIOFuseVFS::fuseRequestPending()
 	// Read requests until empty (-EAGAIN) or error
 	for(;;)
 	{
+		if (m_fusefdNeedsPoll)
+		{
+			struct pollfd pfd{};
+			pfd.fd = fuse_session_fd(m_fuseSession);
+			pfd.events = POLLIN;
+			int pollres = poll(&pfd, 1, 0);
+			if (pollres <= 0)
+			{
+				if (pollres < 0 && errno != EINTR)
+					qWarning(KIOFUSE_LOG) << "Error polling FUSE FD:" << strerror(errno);
+
+				break;
+			}
+		}
+
 		int res = fuse_session_receive_buf(m_fuseSession, &fbuf);
 
 		if (res == -EINTR || res == -EAGAIN)

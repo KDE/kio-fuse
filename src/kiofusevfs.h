@@ -175,6 +175,8 @@ private:
 	std::unique_ptr<struct fuse_conn_info_opts, decltype(&free)> m_fuseConnInfoOpts{nullptr, &free};
 	/** Fuse bookkeeping. */
 	std::unique_ptr<QSocketNotifier> m_fuseNotifier;
+	/** If O_NONBLOCK does not work, sets this to fall back to polling. */
+	bool m_fusefdNeedsPoll = false;
 	/** Path where this VFS is currently mounted at, with trailing '/'. */
 	QString m_mountpoint;
 
