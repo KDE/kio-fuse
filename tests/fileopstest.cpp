@@ -82,19 +82,18 @@ void FileOpsTest::initTestCase()
 	QString programpath = QFINDTESTDATA("kio-fuse");
 
 	QProcess kiofuseProcess;
-	kiofuseProcess.setProgram(QStringLiteral("truss"));
+	kiofuseProcess.setProgram(programpath);
 #ifdef TEST_CACHE_BASED_IO
-	kiofuseProcess.setArguments(QStringList() << QStringLiteral("-f") << programpath << m_mountDir.path() << QStringLiteral("--disable-filejob-io"));
+	kiofuseProcess.setArguments(QStringList() << m_mountDir.path() << QStringLiteral("--disable-filejob-io"));
 #else
-	kiofuseProcess.setArguments({QStringLiteral("-f"), programpath, m_mountDir.path()});
+	kiofuseProcess.setArguments({m_mountDir.path()});
 #endif
 	kiofuseProcess.setProcessChannelMode(QProcess::ForwardedChannels);
 
-	kiofuseProcess.startDetached();
-        QThread::sleep(5);
-	//QVERIFY(kiofuseProcess.waitForFinished());
-	//QCOMPARE(kiofuseProcess.exitStatus(),  QProcess::NormalExit);
-	//QCOMPARE(kiofuseProcess.exitCode(), 0);
+	kiofuseProcess.start();
+	QVERIFY(kiofuseProcess.waitForFinished());
+	QCOMPARE(kiofuseProcess.exitStatus(),  QProcess::NormalExit);
+	QCOMPARE(kiofuseProcess.exitCode(), 0);
 }
 
 void FileOpsTest::cleanupTestCase()
