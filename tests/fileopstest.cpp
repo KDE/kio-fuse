@@ -52,6 +52,7 @@ private Q_SLOTS:
 	void testDirSymlink();
 	void testSymlinkRewrite();
 	void testNonemptyRmdir();
+	void testReadLocalOwnership();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -1011,6 +1012,27 @@ void FileOpsTest::testNonemptyRmdir()
 	// Attempt to rmdir "outer" while "inner" exists inside.
 	QCOMPARE(rmdir(qPrintable(mirrorDir.filePath(QStringLiteral("outer")))), -1);
 	QCOMPARE(errno, ENOTEMPTY);
+}
+
+void FileOpsTest::testReadLocalOwnership()
+{
+	// Some path ideally not owned by the user running this test,
+	// to avoid the fallback for st_uid/st_gid.
+	QDir localDir(QStringLiteral("/"));
+
+	// Mount the temporary dir
+	QString reply = m_kiofuse_iface.mountUrl(QStringLiteral("file://%1").arg(localDir.path())).value();
+	QVERIFY(!reply.isEmpty());
+
+	// Compare dir metadata
+	QFileInfo localDirInfo(localDir.path()),
+	          mirroredDirInfo(reply);
+
+	QVERIFY(mirroredDirInfo.exists());
+	QVERIFY2(localDirInfo.ownerId() != getuid(), "/ owned by the current user. Running as root?");
+	QVERIFY2(localDirInfo.groupId() != getgid(), "/ owned by the group of the current user. Running as root?");
+	QCOMPARE(mirroredDirInfo.ownerId(), localDirInfo.ownerId());
+	QCOMPARE(mirroredDirInfo.groupId(), localDirInfo.groupId());
 }
 
 #ifdef WASTE_DISK_SPACE

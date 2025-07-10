@@ -22,6 +22,7 @@
 #include <QDir>
 #include <QVersionNumber>
 
+#include <kio_version.h>
 #include <KIO/ListJob>
 #include <KIO/MkdirJob>
 #include <KIO/StatJob>
@@ -1824,12 +1825,25 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	// results as those values might only be meaningful on the remote side.
 	// As access checks are only performed by the remote side, it shouldn't matter much though.
 	// It's necessary to make chown/chmod meaningful.
+
+	// Since KIO 6.0, local protocols set UDS_LOCAL_{USER,GROUP}_ID instead of UDS_{USER_GROUP}.
+	#if KIO_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+		if(entry.contains(KIO::UDSEntry::UDS_LOCAL_USER_ID))
+			attr.st_uid = entry.numberValue(KIO::UDSEntry::UDS_LOCAL_USER_ID);
+		else
+	#endif
 	if(entry.contains(KIO::UDSEntry::UDS_USER))
 	{
 		QString user = entry.stringValue(KIO::UDSEntry::UDS_USER);
 		if(auto *pw = getpwnam(user.toUtf8().data()))
 			attr.st_uid = pw->pw_uid;
 	}
+
+	#if KIO_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+		if(entry.contains(KIO::UDSEntry::UDS_LOCAL_GROUP_ID))
+			attr.st_gid = entry.numberValue(KIO::UDSEntry::UDS_LOCAL_GROUP_ID);
+		else
+	#endif
 	if(entry.contains(KIO::UDSEntry::UDS_GROUP))
 	{
 		QString group = entry.stringValue(KIO::UDSEntry::UDS_GROUP);
