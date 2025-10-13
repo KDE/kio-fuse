@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(kio-fuse VERSION 5.0.0)
+project(kio-fuse VERSION 5.1.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
