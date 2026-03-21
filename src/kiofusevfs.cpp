@@ -1296,11 +1296,12 @@ void KIOFuseVFS::read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fu
 					actualSize = std::min(off_t(actualSize) - off, off_t(size));
 				fileJob->read(actualSize);
 				QByteArray buffer;
+				buffer.reserve(actualSize);
 				fileJob->connect(fileJob, &KIO::FileJob::data, [=] (auto *readJob, const QByteArray &data) mutable {
 					Q_UNUSED(readJob);
-					QByteArray truncatedData = data.left(actualSize);
-					buffer.append(truncatedData);
-					actualSize -= truncatedData.size();
+					int bytesToAppend = qMin<off_t>(data.size(), actualSize);
+					buffer.append(data.constData(), bytesToAppend);
+					actualSize -= bytesToAppend;
 
 					if(actualSize > 0)
 					{
