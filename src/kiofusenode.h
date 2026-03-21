@@ -27,7 +27,7 @@ public:
 	    m_stat(stat)
 	{}
 
-	virtual ~KIOFuseNode() {}
+	virtual ~KIOFuseNode() = default;
 
 	uint64_t m_lookupCount = 0, // This counts how many references to this node the kernel has
 	         m_openCount = 0; // This counts how often the kernel has this node opened
