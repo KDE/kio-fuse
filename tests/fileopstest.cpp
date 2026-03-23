@@ -285,11 +285,18 @@ void FileOpsTest::testLocalFileOps()
 
 	// Verify the symlink inside is correct
 	QFile symlink(QDir(mirrordataPath).filePath(QStringLiteral("symlink")));
+	QCOMPARE(readlink(symlink.fileName()), QStringLiteral("symlinktärget"));
 
+	// Verify st_size is set correctly, also with multi-byte characters like "ö"
+	struct stat symlinkStat;
+	QCOMPARE(lstat(QDir(mirrordataPath).filePath(QStringLiteral("symlink")).toUtf8().data(), &symlinkStat), 0);
+	QCOMPARE(symlinkStat.st_size, QStringLiteral("symlinktärget").toUtf8().size());
+
+	// Try to use QFile on it
 	QVERIFY(symlink.open(QIODevice::ReadOnly));
 	QCOMPARE(symlink.readAll(), QStringLiteral("symlinktargetcontent").toUtf8());
-	QCOMPARE(symlink.symLinkTarget(), QDir(mirrordataPath).filePath(QStringLiteral("symlinktarget")));
-	
+	QCOMPARE(symlink.symLinkTarget(), QDir(mirrordataPath).filePath(QStringLiteral("symlinktärget")));
+
 	// Verify that we adhere to O_APPEND flag as kernel doesn't handle this for us.
 	QTemporaryFile appendFile;
 	QVERIFY(appendFile.open());
@@ -954,18 +961,23 @@ void FileOpsTest::testSymlinkRewrite()
 	QDir mirrorDir(reply);
 	QVERIFY(mirrorDir.exists());
 
-	// Create a symlink /mnt/file/.../symlink -> /mnt/file/.../somedir/../somefile.
+	// Create a symlink /mnt/file/.../symlink -> /mnt/file/.../somedir/../sömefile.
 	// This is to test that even if the target does not exist and is some convoluted
 	// path, it is still rewritten correctly.
-	QCOMPARE(symlink(qPrintable(mirrorDir.filePath(QStringLiteral("somedir/../somefile"))),
+	QCOMPARE(symlink(qPrintable(mirrorDir.filePath(QStringLiteral("somedir/../sömefile"))),
 	                 qPrintable(mirrorDir.filePath(QStringLiteral("symlink")))), 0);
 	// Verify that it can be read back as-is on the mount
 	QCOMPARE(readlink(mirrorDir.filePath(QStringLiteral("symlink"))),
-	         mirrorDir.filePath(QStringLiteral("somedir/../somefile")));
+	         mirrorDir.filePath(QStringLiteral("somedir/../sömefile")));
+
+	// Verify st_size is set correctly, also with multi-byte characters like "ö"
+	struct stat symlinkStat;
+	QCOMPARE(lstat(mirrorDir.filePath(QStringLiteral("symlink")).toUtf8().data(), &symlinkStat), 0);
+	QCOMPARE(symlinkStat.st_size, mirrorDir.filePath(QStringLiteral("somedir/../sömefile")).toUtf8().size());
 
 	// Verify that it's absolute on the local side
 	QCOMPARE(readlink(localDir.filePath(QStringLiteral("symlink"))),
-	         localDir.filePath(QStringLiteral("somedir/../somefile")));
+	         localDir.filePath(QStringLiteral("somedir/../sömefile")));
 
 	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("tar")))
 		QSKIP("Test requires tar protocol to be supported. See README for packages required.");

@@ -751,20 +751,7 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 
 	that->awaitAttrRefreshed(node, [=](int error) {
 		Q_UNUSED(error); // Just send the old target...
-
-		QString target = symlinkNode->m_target;
-
-		// Convert an absolute link to be absolute within its origin
-		if(QDir::isAbsolutePath(target))
-		{
-			target = target.mid(1); // Strip the initial /
-			QUrl origin = that->originOfUrl(that->remoteUrl(symlinkNode));
-			origin = addPathElements(origin, target.split(QLatin1Char('/')));
-			target = that->m_mountpoint + that->mapUrlToVfs(origin).join(QLatin1Char('/'));
-			qCDebug(KIOFUSE_LOG) << "Detected reading of absolute symlink" << symlinkNode->m_target << "at" << that->virtualPath(symlinkNode) << ", rewritten to" << target;
-		}
-
-		fuse_reply_readlink(req, target.toUtf8().data());
+		fuse_reply_readlink(req, symlinkNode->m_target.toUtf8().data());
 	});
 }
 
@@ -1912,10 +1899,22 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 	else if(entry.isLink())	// Check for link first as isDir can also be a link
 	{
 		attr.st_mode |= S_IFLNK;
-		auto ret = std::make_shared<KIOFuseSymLinkNode>(parentIno, name, attr);
-		ret->m_target = entry.stringValue(KIO::UDSEntry::UDS_LINK_DEST);
-		attr.st_size = ret->m_target.size();
-		return ret;
+		auto symlinkNode = std::make_shared<KIOFuseSymLinkNode>(parentIno, name, attr);
+		QString target = entry.stringValue(KIO::UDSEntry::UDS_LINK_DEST);
+
+		// Convert an absolute link to be absolute within its origin
+		if(QDir::isAbsolutePath(target))
+		{
+			target = target.mid(1); // Strip the initial /
+			QUrl origin = originOfUrl(remoteUrl(symlinkNode));
+			origin = addPathElements(origin, target.split(QLatin1Char('/')));
+			target = m_mountpoint + mapUrlToVfs(origin).join(QLatin1Char('/'));
+			qCDebug(KIOFUSE_LOG) << "Detected reading of absolute symlink" << symlinkNode->m_target << "at" << virtualPath(symlinkNode) << ", rewritten to" << target;
+		}
+
+		symlinkNode->m_target = target;
+		symlinkNode->m_stat.st_size = target.toUtf8().length();
+		return symlinkNode;
 	}
 	else if(entry.isDir())
 	{
