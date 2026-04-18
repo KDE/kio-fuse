@@ -123,5 +123,5 @@ public:
 class KIOFuseSymLinkNode : public KIOFuseRemoteNodeInfo, public KIOFuseNode {
 public:
 	using KIOFuseNode::KIOFuseNode;
-	QString m_target;
+	QByteArray m_target;
 };

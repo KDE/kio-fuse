@@ -751,7 +751,7 @@ void KIOFuseVFS::readlink(fuse_req_t req, fuse_ino_t ino)
 
 	that->awaitAttrRefreshed(node, [=](int error) {
 		Q_UNUSED(error); // Just send the old target...
-		fuse_reply_readlink(req, symlinkNode->m_target.toUtf8().data());
+		fuse_reply_readlink(req, symlinkNode->m_target.constData());
 	});
 }
 
@@ -1873,8 +1873,8 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 			// Symlink to local file/folder
 			attr.st_mode |= S_IFLNK;
 			auto ret = std::make_shared<KIOFuseSymLinkNode>(parentIno, name, attr);
-			ret->m_target = target;
-			ret->m_stat.st_size = ret->m_target.toUtf8().length();
+			ret->m_target = target.toUtf8();
+			ret->m_stat.st_size = ret->m_target.size();
 			return ret;
 		}
 		else if(entry.isLink())
@@ -1912,8 +1912,8 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::createNodeFromUDSEntry(const KIO::UDSEn
 			qCDebug(KIOFUSE_LOG) << "Detected reading of absolute symlink" << symlinkNode->m_target << "at" << virtualPath(symlinkNode) << ", rewritten to" << target;
 		}
 
-		symlinkNode->m_target = target;
-		symlinkNode->m_stat.st_size = target.toUtf8().length();
+		symlinkNode->m_target = target.toUtf8();
+		symlinkNode->m_stat.st_size = symlinkNode->m_target.size();
 		return symlinkNode;
 	}
 	else if(entry.isDir())
