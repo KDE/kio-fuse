@@ -11,6 +11,11 @@
 #include <QDBusConnection>
 #include <QStandardPaths>
 #include <QDir>
+#include <QUuid>
+
+#include <KBookmark>
+#include <KBookmarkManager>
+#include <KProtocolInfo>
 
 #include "debug.h"
 #include "kiofuseservice.h"
@@ -125,8 +130,72 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 
 		QString localPath = {m_mountpoint + QLatin1Char('/') + path};
 		QDBusConnection::sessionBus().send(message.createReply() << localPath);
+
+		addPlaceForUrl(url);
 	});
 	return QString();
+}
+
+void KIOFuseService::addPlaceForUrl(const QUrl &url)
+{
+	if(url.host().isEmpty() || m_mountpoint.isEmpty())
+		return;
+
+	QUrl strippedUrl = url;
+	strippedUrl.setPassword({});
+	const QString shareLocalPath = m_mountpoint + QLatin1Char('/')
+	                               + strippedUrl.scheme() + QLatin1Char('/')
+	                               + strippedUrl.authority();
+	const QUrl placeHref = QUrl::fromLocalFile(shareLocalPath);
+	// Normalize the remote URL to scheme://authority
+	QUrl shareRootUrl;
+	shareRootUrl.setScheme(strippedUrl.scheme());
+	if(!strippedUrl.userName().isEmpty())
+		shareRootUrl.setUserName(strippedUrl.userName());
+	shareRootUrl.setHost(strippedUrl.host());
+	if(strippedUrl.port() != -1)
+		shareRootUrl.setPort(strippedUrl.port());
+	const QString remoteUrlNoCreds = shareRootUrl.toString(QUrl::RemoveUserInfo);
+
+	if(!m_placesBookmarkManager)
+	{
+		const QString xbelPath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+		                         + QStringLiteral("/user-places.xbel");
+		m_placesBookmarkManager = new KBookmarkManager(xbelPath, this);
+	}
+
+	KBookmarkGroup root = m_placesBookmarkManager->root();
+	if(root.isNull())
+		return;
+
+	// Dedupe by remote URL
+	for(KBookmark bm = root.first(); !bm.isNull(); bm = root.next(bm))
+	{
+		if(bm.metaDataItem(QStringLiteral("kioFuseRemoteUrl")) == remoteUrlNoCreds)
+		{
+			if(bm.url() != placeHref)
+			{
+				bm.setUrl(placeHref);
+				m_placesBookmarkManager->emitChanged(root);
+			}
+			return;
+		}
+	}
+
+	QString iconName = KProtocolInfo::icon(strippedUrl.scheme());
+	if(iconName.isEmpty())
+		iconName = QStringLiteral("folder-remote");
+
+	const QString label = strippedUrl.userName().isEmpty()
+		? strippedUrl.host()
+		: QStringLiteral("%1@%2").arg(strippedUrl.userName(), strippedUrl.host());
+
+	KBookmark bookmark = root.addBookmark(label, placeHref, iconName);
+	bookmark.setMetaDataItem(QStringLiteral("ID"), QUuid::createUuid().toString(QUuid::WithoutBraces));
+	bookmark.setMetaDataItem(QStringLiteral("kioFuseManaged"), QStringLiteral("true"));
+	bookmark.setMetaDataItem(QStringLiteral("kioFuseRemoteUrl"), remoteUrlNoCreds);
+
+	m_placesBookmarkManager->emitChanged(root);
 }
 
 bool KIOFuseService::registerService()

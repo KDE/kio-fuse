@@ -17,6 +17,8 @@
 
 #include "kiofusevfs.h"
 
+class KBookmarkManager;
+
 class KIOFuseServicePrivate : public QDBusAbstractAdaptor {
 	Q_OBJECT
 	Q_CLASSINFO("D-Bus Interface", "org.kde.KIOFuse.Private")
@@ -58,6 +60,9 @@ private:
 	/** Daemonizes the kio-fuse process, whilst also managing the registration of the org.kde.KIOFuse service.
 	  * Derived from fuse_daemonize() in libfuse. */
 	bool registerServiceDaemonized();
+	/** Adds a bookmark for the host root of the given URL to the user-places.xbel
+	  * file so it shows up in the Places panel under "Remote". */
+	void addPlaceForUrl(const QUrl &url);
 	/** where kiofusevfs is mounted */
 	QString m_mountpoint;
 	/** tempdir created if user does not specify mountpoint */
@@ -66,4 +71,6 @@ private:
 	static const QStringList m_blacklist;
 	/** DBus Adaptor exported as org.kde.KIOFuse.Private interface. */
 	KIOFuseServicePrivate m_privateInterface{this};
+
+	KBookmarkManager *m_placesBookmarkManager = nullptr;
 };

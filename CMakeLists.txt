@@ -27,6 +27,7 @@ include(ECMConfiguredInstall)
 find_package(PkgConfig REQUIRED)
 find_package(Qt${QT_MAJOR_VERSION} ${QT_MIN_VERSION} COMPONENTS Core REQUIRED)
 find_package(KF${QT_MAJOR_VERSION} ${KF_MIN_VERSION} REQUIRED COMPONENTS
+	Bookmarks
 	CoreAddons
 	KIO
 )
