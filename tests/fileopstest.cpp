@@ -56,6 +56,8 @@ private Q_SLOTS:
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
+	void testAutomount();
+
 
 private:
 	QDateTime roundDownToSecond(const QDateTime &dt);
@@ -80,6 +82,12 @@ void FileOpsTest::initTestCase()
 	// which is fatal if umount fails while something is mounted inside
 	m_mountDir.setAutoRemove(false);
 	QString programpath = QFINDTESTDATA("kio-fuse");
+
+	const QByteArray existingPluginPath = qgetenv("QT_PLUGIN_PATH");
+	QByteArray newPluginPath = QByteArray(KIOFUSE_STUBWORKER_DIR);
+	if(!existingPluginPath.isEmpty())
+		newPluginPath += ':' + existingPluginPath;
+	qputenv("QT_PLUGIN_PATH", newPluginPath);
 
 	QProcess kiofuseProcess;
 	kiofuseProcess.setProgram(programpath);
@@ -1071,7 +1079,21 @@ void FileOpsTest::testReadWrite4GBFile()
 	QVERIFY(mirroredFile.seek(qint64(4096)*1024*1024-6));
 	QCOMPARE(localFile2.read(20), mirroredFile.read(20));
 }
-#endif // WASTE_DISK_SPACE
+#endif
+
+void FileOpsTest::testAutomount()
+{
+	const QString hostDir = QStringLiteral("%1/stub/anyhost").arg(m_mountDir.path());
+
+	struct stat st;
+	QCOMPARE(stat(qPrintable(hostDir), &st), 0);
+	QVERIFY(S_ISDIR(st.st_mode));
+
+	QDir d(hostDir);
+	QStringList names = d.entryList(QDir::Files);
+	std::sort(names.begin(), names.end());
+	QCOMPARE(names, (QStringList{QStringLiteral("entry1.txt"), QStringLiteral("entry2.txt")}));
+}
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
 {
