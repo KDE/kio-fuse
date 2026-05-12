@@ -8,12 +8,15 @@
 
 #include <fuse_lowlevel.h>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <set>
 #include <unordered_map>
 
 #include <QEventLoopLocker>
+#include <QHash>
+#include <QList>
 #include <QObject>
 #include <QSocketNotifier>
 
@@ -193,6 +196,10 @@ private:
 	std::unordered_map<fuse_ino_t, std::shared_ptr<KIOFuseNode>> m_nodes;
 	/** Set of all nodes with a dirty cache. */
 	std::set<fuse_ino_t> m_dirtyNodes;
+
+	QHash<QString, QList<fuse_req_t>> m_pendingAutomounts;
+	QHash<QString, std::chrono::steady_clock::time_point> m_recentAutomountFailures;
+	static const std::chrono::seconds AUTOMOUNT_FAILURE_TTL;
 
 	/** @see setUseFileJob() */
 	bool m_useFileJob;

@@ -35,6 +35,8 @@
 #include "debug.h"
 #include "kiofusevfs.h"
 
+const std::chrono::seconds KIOFuseVFS::AUTOMOUNT_FAILURE_TTL{60};
+
 // Flags that don't exist on FreeBSD; since these are used as
 // bit(masks), setting them to 0 effectively means they're always unset.
 #ifndef O_NOATIME
@@ -1550,6 +1552,7 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFus
 
 void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
+	qDebug() << "looking up=====================" << name;
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	auto parentNode = that->nodeForIno(parent);
 	if(!parentNode)
@@ -1561,6 +1564,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	auto parentDirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(parentNode);
 	if(!parentDirNode)
 	{
+		qDebug() << "not here -=- -=- -=-";
 		fuse_reply_err(req, ENOTDIR);
 		return;
 	}
@@ -1581,7 +1585,82 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	auto remoteDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(parentDirNode);
 	if(!remoteDirNode)
 	{
-		// Directory not remote, so definitely does not exist
+		// Not a remote dir. Two automount cases:
+		//   - parent is the FUSE root and nodeName is a known internet scheme:
+		//     create an empty scheme dir
+		//   - parent is a scheme dir (its own parent is FUSE root) and nodeName
+		//     is an authority: trigger an internal mountUrl
+		// Anything else genuinely doesn't exist.
+		if(parentDirNode->m_stat.st_ino == KIOFuseIno::Root
+		   && KProtocolInfo::isKnownProtocol(nodeName)
+		   && KProtocolInfo::protocolClass(nodeName) == QStringLiteral(":internet"))
+		{
+			struct stat attr = {};
+			that->fillStatForFile(attr);
+			attr.st_mode = S_IFDIR | 0755;
+			auto schemeDir = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Root, nodeName, attr);
+			that->insertNode(schemeDir);
+			that->replyEntry(req, schemeDir);
+			return;
+		}
+
+		if(parentDirNode->m_parentIno == KIOFuseIno::Root
+		   && !parentDirNode->m_nodeName.isEmpty())
+		{
+			const QString scheme = parentDirNode->m_nodeName;
+			const QString authority = nodeName;
+			const QString authorityKey = scheme + QStringLiteral("://") + authority;
+
+			// Recent-failure cache check.
+			auto failIt = that->m_recentAutomountFailures.find(authorityKey);
+			if(failIt != that->m_recentAutomountFailures.end())
+			{
+				if(std::chrono::steady_clock::now() - failIt.value() < AUTOMOUNT_FAILURE_TTL)
+				{
+					fuse_reply_err(req, ENOENT);
+					return;
+				}
+				that->m_recentAutomountFailures.erase(failIt);
+			}
+
+			// collect concurrent lookups for the same authority.
+			auto pendIt = that->m_pendingAutomounts.find(authorityKey);
+			if(pendIt != that->m_pendingAutomounts.end())
+			{
+				pendIt.value().append(req);
+				return;
+			}
+			that->m_pendingAutomounts[authorityKey] = {req};
+
+			QUrl url;
+			url.setScheme(scheme);
+			url.setAuthority(authority);
+
+			const fuse_ino_t parentIno = parentDirNode->m_stat.st_ino;
+			that->mountUrl(url, [that, authorityKey, parentIno, authority](const QString &, int error) {
+				const auto reqs = that->m_pendingAutomounts.take(authorityKey);
+
+				if(error)
+				{
+					that->m_recentAutomountFailures[authorityKey] = std::chrono::steady_clock::now();
+					for(auto r : reqs)
+						fuse_reply_err(r, ENOENT);
+					return;
+				}
+
+				auto parent = std::dynamic_pointer_cast<KIOFuseDirNode>(that->nodeForIno(parentIno));
+				auto child = parent ? that->nodeByName(parent, authority) : nullptr;
+				for(auto r : reqs)
+				{
+					if(child)
+						that->replyEntry(r, child);
+					else
+						fuse_reply_err(r, ENOENT);
+				}
+			});
+			return;
+		}
+
 		fuse_reply_err(req, ENOENT);
 		return;
 	}
