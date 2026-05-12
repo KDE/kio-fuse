@@ -1,0 +1,19 @@
+{
+    "KDE-KIO-Protocols": {
+        "stub": {
+            "Class": ":internet",
+            "Icon": "folder-remote",
+            "input": "none",
+            "listing": [
+                "Name",
+                "Type",
+                "Size",
+                "Access"
+            ],
+            "maxInstances": 4,
+            "output": "filesystem",
+            "protocol": "stub",
+            "reading": true
+        }
+    }
+}
