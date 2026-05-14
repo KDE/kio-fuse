@@ -3,6 +3,7 @@ Description=Fuse interface for KIO
 PartOf=graphical-session.target
 
 [Service]
+ExecStartPre=/bin/mkdir -p %t/kio-fuse
 ExecStart=@KDE_INSTALL_FULL_LIBEXECDIR@/kio-fuse -f -o auto_unmount %t/kio-fuse
 ExecStopPost=-@FUSERMOUNT3_EXECUTABLE@ -u -z %t/kio-fuse
 BusName=org.kde.KIOFuse
