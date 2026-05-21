@@ -11,7 +11,7 @@ ecm_generate_dbus_service_file(
    DESTINATION ${KDE_INSTALL_DBUSSERVICEDIR}
 )
 
-find_program(FUSERMOUNT3_EXECUTABLE fusermount3 REQUIRED)
+find_package(fusermount3 REQUIRED)
 
 if(DEFINED KDE_INSTALL_SYSTEMDUSERUNITDIR)
 	ecm_install_configured_files(INPUT kio-fuse.service.in DESTINATION ${KDE_INSTALL_SYSTEMDUSERUNITDIR})

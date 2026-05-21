@@ -5,7 +5,7 @@ PartOf=graphical-session.target
 [Service]
 ExecStartPre=/bin/mkdir -p %t/kio-fuse
 ExecStart=@KDE_INSTALL_FULL_LIBEXECDIR@/kio-fuse -f -o auto_unmount %t/kio-fuse
-ExecStopPost=-@FUSERMOUNT3_EXECUTABLE@ -u -z %t/kio-fuse
+ExecStopPost=-@fusermount3_EXE@ -u -z %t/kio-fuse
 Restart=on-failure
 RestartSec=2
 StartLimitBurst=5
