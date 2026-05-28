@@ -1611,6 +1611,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 			auto schemeDir = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Root, nodeName, attr);
 			that->insertNode(schemeDir);
 			that->replyEntry(req, schemeDir);
+			qCInfo(KIOFUSE_LOG) << "Created scheme dir" << nodeName;
 			return;
 		}
 
@@ -1628,6 +1629,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 				if(std::chrono::steady_clock::now() - failIt.value() < AUTOMOUNT_FAILURE_TTL)
 				{
 					fuse_reply_err(req, ENOENT);
+					qCWarning(KIOFUSE_LOG) << "Couldn't mount after retries" << authorityKey;
 					return;
 				}
 				that->m_recentAutomountFailures.erase(failIt);
@@ -1655,7 +1657,10 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 					that->m_recentAutomountFailures[authorityKey] = std::chrono::steady_clock::now();
 					for(auto r : reqs)
 						fuse_reply_err(r, ENOENT);
+
+					qCWarning(KIOFUSE_LOG) << "Couldn't mount after retries" << authorityKey << error;
 					return;
+
 				}
 
 				auto parent = std::dynamic_pointer_cast<KIOFuseDirNode>(that->nodeForIno(parentIno));
@@ -1663,9 +1668,15 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 				for(auto r : reqs)
 				{
 					if(child)
+					{
+						qCInfo(KIOFUSE_LOG) << "Mounted " << authorityKey;
 						that->replyEntry(r, child);
+					}
 					else
+					{
+						qCWarning(KIOFUSE_LOG) << "Mounted but child node not found for" << authorityKey;
 						fuse_reply_err(r, ENOENT);
+					}
 				}
 			});
 			return;
