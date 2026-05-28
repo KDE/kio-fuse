@@ -1564,7 +1564,6 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFus
 
 void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
-	qDebug() << "looking up=====================" << name;
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
 	auto parentNode = that->nodeForIno(parent);
 	if(!parentNode)
@@ -1576,7 +1575,6 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	auto parentDirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(parentNode);
 	if(!parentDirNode)
 	{
-		qDebug() << "not here -=- -=- -=-";
 		fuse_reply_err(req, ENOTDIR);
 		return;
 	}
