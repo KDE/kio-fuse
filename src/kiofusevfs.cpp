@@ -1611,7 +1611,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 			auto schemeDir = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Root, nodeName, attr);
 			that->insertNode(schemeDir);
 			that->replyEntry(req, schemeDir);
-			qCInfo(KIOFUSE_LOG) << "Created scheme dir" << nodeName;
+			qCInfo(KIOFUSE_LOG) << "Resuming mount for " << nodeName;
 			return;
 		}
 
