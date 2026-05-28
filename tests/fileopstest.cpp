@@ -57,6 +57,9 @@ private Q_SLOTS:
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
 	void testAutomount();
+	void testAutomountSchemeDir();
+	void testAutomountUnknownProtocol();
+	void testAutomountFailedMount();
 
 
 private:
@@ -1105,6 +1108,38 @@ void FileOpsTest::testAutomount()
 	QStringList names = d.entryList(QDir::Files);
 	std::sort(names.begin(), names.end());
 	QCOMPARE(names, (QStringList{QStringLiteral("entry1.txt"), QStringLiteral("entry2.txt")}));
+}
+
+void FileOpsTest::testAutomountSchemeDir()
+{
+	const QString schemeDir = QStringLiteral("%1/stub").arg(m_mountDir.path());
+
+	struct stat st;
+	QCOMPARE(stat(qPrintable(schemeDir), &st), 0);
+	QVERIFY(S_ISDIR(st.st_mode));
+}
+
+void FileOpsTest::testAutomountUnknownProtocol()
+{
+	const QString unrealscheme = QStringLiteral("%1/notarealscheme").arg(m_mountDir.path());
+
+	struct stat st;
+	QCOMPARE(stat(qPrintable(unrealscheme), &st), -1);
+	QCOMPARE(errno, ENOENT);
+}
+
+
+void FileOpsTest::testAutomountFailedMount()
+{
+	const QString failHost = QStringLiteral("%1/stub/failhost").arg(m_mountDir.path());
+
+	struct stat st;
+	QCOMPARE(stat(qPrintable(failHost), &st), -1);
+	QCOMPARE(errno, ENOENT);
+
+	// Second lookup within the failure cache TTL. Still ENOENT.
+	QCOMPARE(stat(qPrintable(failHost), &st), -1);
+	QCOMPARE(errno, ENOENT);
 }
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
