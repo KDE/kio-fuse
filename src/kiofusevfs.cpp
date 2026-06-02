@@ -1614,8 +1614,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 			return;
 		}
 
-		if(parentDirNode->m_parentIno == KIOFuseIno::Root
-		   && !parentDirNode->m_nodeName.isEmpty())
+		if(parentDirNode->m_parentIno == KIOFuseIno::Root)
 		{
 			const QString scheme = parentDirNode->m_nodeName;
 			const QString authority = nodeName;
