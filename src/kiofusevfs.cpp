@@ -1590,7 +1590,6 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		//     is an authority: trigger an internal mountUrl
 		// Anything else genuinely doesn't exist.
 		if(parent == KIOFuseIno::Root
-		   && KProtocolInfo::isKnownProtocol(nodeName)
 		   && KProtocolInfo::protocolClass(nodeName) == QStringLiteral(":internet"))
 		{
 			struct stat attr = {};
@@ -1603,8 +1602,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 			return;
 		}
 
-		if(parentDirNode->m_parentIno == KIOFuseIno::Root
-		   && !parentDirNode->m_nodeName.isEmpty())
+		if(parentDirNode->m_parentIno == KIOFuseIno::Root)
 		{
 			const QString scheme = parentDirNode->m_nodeName;
 			const QString authority = nodeName;
