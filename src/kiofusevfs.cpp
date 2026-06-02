@@ -1589,7 +1589,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 		//   - parent is a scheme dir (its own parent is FUSE root) and nodeName
 		//     is an authority: trigger an internal mountUrl
 		// Anything else genuinely doesn't exist.
-		if(parentDirNode->m_stat.st_ino == KIOFuseIno::Root
+		if(parent == KIOFuseIno::Root
 		   && KProtocolInfo::isKnownProtocol(nodeName)
 		   && KProtocolInfo::protocolClass(nodeName) == QStringLiteral(":internet"))
 		{
