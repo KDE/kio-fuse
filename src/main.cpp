@@ -8,6 +8,8 @@
 #include <QCoreApplication>
 
 #include <KAboutData>
+#include <KJobUiDelegate>
+#include <KIO/JobUiDelegateFactory>
 
 #include "kiofuseservice.h"
 #include "kiofuseversion.h"
@@ -26,6 +28,16 @@ static struct fuse_opt kiofuse_opts[] = {
 };
 
 #undef KIOFUSE_OPT
+
+namespace {
+class KIOFuseJobUiDelegateFactory : public KIO::JobUiDelegateFactory
+{
+public:
+	using KIO::JobUiDelegateFactory::JobUiDelegateFactory;
+	KJobUiDelegate *createDelegate() const override { return new KJobUiDelegate; }
+	KJobUiDelegate *createDelegate(KJobUiDelegate::Flags flags, QWidget *) const override { return new KJobUiDelegate(flags); }
+};
+}
 
 int main(int argc, char *argv[])
 {
@@ -54,6 +66,10 @@ int main(int argc, char *argv[])
 	}
 
 	QCoreApplication a(argc, argv);
+
+	static KIOFuseJobUiDelegateFactory uiDelegateFactory;
+	KIO::setDefaultJobUiDelegateFactory(&uiDelegateFactory);
+
 	KIOFuseService kiofuseservice;
 
 	KAboutData about(QStringLiteral("kiofuse"), QStringLiteral("FUSE Interface for KIO"), QStringLiteral(KIOFUSE_VERSION_STRING));
