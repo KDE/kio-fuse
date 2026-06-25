@@ -8,15 +8,12 @@
 
 #include <fuse_lowlevel.h>
 
-#include <chrono>
 #include <functional>
 #include <memory>
 #include <set>
 #include <unordered_map>
 
 #include <QEventLoopLocker>
-#include <QHash>
-#include <QList>
 #include <QObject>
 #include <QSocketNotifier>
 
@@ -161,7 +158,10 @@ private:
 	/** Stats url. If successful, returns the path where url + pathElements is reachable in callback.
 	  * If it failed, it moves one part of pathElements to url and tries again, recursively. */
 	void findAndCreateOrigin(const QUrl &url, const QStringList &pathElements, const std::function<void(const QString&, int)> &callback);
-    
+	
+	/** Creates the scheme dir or mounts the authority. */
+	void attemptAutomount(fuse_req_t req, const std::shared_ptr<KIOFuseDirNode> &parentDirNode, const QString &nodeName);
+
 	/** Returns the corresponding FUSE error to the given KIO Job error */
 	static int kioErrorToFuseError(const int kioError);
 
@@ -196,10 +196,6 @@ private:
 	std::unordered_map<fuse_ino_t, std::shared_ptr<KIOFuseNode>> m_nodes;
 	/** Set of all nodes with a dirty cache. */
 	std::set<fuse_ino_t> m_dirtyNodes;
-
-	QHash<QString, QList<fuse_req_t>> m_pendingAutomounts;
-	QHash<QString, std::chrono::steady_clock::time_point> m_recentAutomountFailures;
-	static const std::chrono::seconds AUTOMOUNT_FAILURE_TTL;
 
 	/** @see setUseFileJob() */
 	bool m_useFileJob;

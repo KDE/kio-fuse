@@ -31,11 +31,11 @@
 #include <KIO/DeleteJob>
 #include <KIO/FileJob>
 #include <KProtocolManager>
+#include <KConfigGroup>
+#include <KSharedConfig>
 
 #include "debug.h"
 #include "kiofusevfs.h"
-
-const std::chrono::seconds KIOFuseVFS::AUTOMOUNT_FAILURE_TTL{60};
 
 // Flags that don't exist on FreeBSD; since these are used as
 // bit(masks), setting them to 0 effectively means they're always unset.
@@ -78,8 +78,9 @@ struct KIOFuseVFS::FuseLLOps : public fuse_lowlevel_ops
 	}
 };
 
-const struct KIOFuseVFS::FuseLLOps KIOFuseVFS::fuse_ll_ops;
+constexpr double AUTOMOUNT_FAILURE_TIMEOUT = 30.0;
 
+const struct KIOFuseVFS::FuseLLOps KIOFuseVFS::fuse_ll_ops;
 const std::chrono::steady_clock::duration KIOFuseRemoteNodeInfo::ATTR_TIMEOUT = std::chrono::seconds(30);
 std::chrono::steady_clock::time_point g_timeoutEpoch = {};
 
@@ -159,6 +160,24 @@ static QUrl addPathElements(QUrl url, QStringList pathElements)
 
 	url.setPath(url.path() + pathElements.join(QLatin1Char('/')));
 	return url;
+}
+
+static QString usernameConfigKey(const QUrl &url)
+{
+	return url.adjusted(QUrl::RemoveUserInfo | QUrl::RemovePath
+	                    | QUrl::RemoveQuery | QUrl::RemoveFragment).toString();
+}
+
+static QString storedUsername(const QUrl &url)
+{
+	return KSharedConfig::openConfig(QStringLiteral("kio-fuserc"))
+	    ->group(QStringLiteral("Usernames")).readEntry(usernameConfigKey(url), QString());
+}
+
+static void rememberUsername(const QUrl &url)
+{
+	auto config = KSharedConfig::openConfig(QStringLiteral("kio-fuserc"));
+	config->group(QStringLiteral("Usernames")).writeEntry(usernameConfigKey(url), url.userName());
 }
 
 int KIOFuseVFS::signalFd[2];
@@ -467,6 +486,8 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 		}
 
 		originNode->m_overrideUrl = url; // Allow the user to change the password
+		if(url.userName().isEmpty())
+			originNode->m_overrideUrl.setUserName(storedUsername(url));
 		callback((targetPathComponents + pathElements).join(QLatin1Char('/')), 0);
 		return;
 	});
@@ -1562,6 +1583,71 @@ std::shared_ptr<KIOFuseNode> KIOFuseVFS::nodeByName(const std::shared_ptr<KIOFus
 	return nullptr;
 }
 
+void KIOFuseVFS::attemptAutomount(fuse_req_t req, const std::shared_ptr<KIOFuseDirNode> &parentDirNode, const QString &nodeName)
+{
+	// Two automount cases:
+	//   - parent is the FUSE root and nodeName is a known internet scheme:
+	//     create an empty scheme dir
+	//   - parent is a scheme dir (its own parent is FUSE root) and nodeName
+	//     is an authority: trigger an internal mountUrl
+	// Anything else genuinely doesn't exist.
+	if(parentDirNode->m_stat.st_ino == KIOFuseIno::Root
+	   && KProtocolInfo::protocolClass(nodeName) == QStringLiteral(":internet"))
+	{
+		struct stat attr = {};
+		fillStatForFile(attr);
+		attr.st_mode = S_IFDIR | 0755;
+		auto schemeDir = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Root, nodeName, attr);
+		insertNode(schemeDir);
+		replyEntry(req, schemeDir);
+		qCInfo(KIOFUSE_LOG) << "Resuming mount for " << nodeName;
+		return;
+	}
+
+	if(parentDirNode->m_parentIno == KIOFuseIno::Root)
+	{
+		const QString scheme = parentDirNode->m_nodeName;
+		const QString authority = nodeName;
+		const QString authorityKey = scheme + QStringLiteral("://") + authority;
+
+		QUrl url;
+		url.setScheme(scheme);
+		url.setAuthority(authority);
+
+		if(url.host().isEmpty())
+		{
+			fuse_reply_err(req, ENOENT);
+			return;
+		}
+
+		mountUrl(url, [this, authorityKey, parentDirNode, authority, req](const QString &, int error) {
+			if(error)
+			{
+				struct fuse_entry_param entry {};
+				entry.entry_timeout = AUTOMOUNT_FAILURE_TIMEOUT;
+				fuse_reply_entry(req, &entry);
+				qCWarning(KIOFUSE_LOG) << "Couldn't mount after retries" << authorityKey << error;
+				return;
+			}
+
+			auto child = nodeByName(parentDirNode, authority);
+			if(child)
+			{
+				qCInfo(KIOFUSE_LOG) << "Mounted " << authorityKey;
+				replyEntry(req, child);
+			}
+			else
+			{
+				qCWarning(KIOFUSE_LOG) << "Mounted but child node not found for" << authorityKey;
+				fuse_reply_err(req, ENOENT);
+			}
+		});
+		return;
+	}
+
+	fuse_reply_err(req, ENOENT);
+}
+
 void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	KIOFuseVFS *that = reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req));
@@ -1595,92 +1681,7 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	auto remoteDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(parentDirNode);
 	if(!remoteDirNode)
 	{
-		// Not a remote dir. Two automount cases:
-		//   - parent is the FUSE root and nodeName is a known internet scheme:
-		//     create an empty scheme dir
-		//   - parent is a scheme dir (its own parent is FUSE root) and nodeName
-		//     is an authority: trigger an internal mountUrl
-		// Anything else genuinely doesn't exist.
-		if(parent == KIOFuseIno::Root
-		   && KProtocolInfo::protocolClass(nodeName) == QStringLiteral(":internet"))
-		{
-			struct stat attr = {};
-			that->fillStatForFile(attr);
-			attr.st_mode = S_IFDIR | 0755;
-			auto schemeDir = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Root, nodeName, attr);
-			that->insertNode(schemeDir);
-			that->replyEntry(req, schemeDir);
-			qCInfo(KIOFUSE_LOG) << "Resuming mount for " << nodeName;
-			return;
-		}
-
-		if(parentDirNode->m_parentIno == KIOFuseIno::Root)
-		{
-			const QString scheme = parentDirNode->m_nodeName;
-			const QString authority = nodeName;
-			const QString authorityKey = scheme + QStringLiteral("://") + authority;
-
-			// Recent-failure cache check.
-			auto failIt = that->m_recentAutomountFailures.find(authorityKey);
-			if(failIt != that->m_recentAutomountFailures.end())
-			{
-				if(std::chrono::steady_clock::now() - failIt.value() < AUTOMOUNT_FAILURE_TTL)
-				{
-					fuse_reply_err(req, ENOENT);
-					qCWarning(KIOFUSE_LOG) << "Couldn't mount after retries" << authorityKey;
-					return;
-				}
-				that->m_recentAutomountFailures.erase(failIt);
-			}
-
-			// collect concurrent lookups for the same authority.
-			auto pendIt = that->m_pendingAutomounts.find(authorityKey);
-			if(pendIt != that->m_pendingAutomounts.end())
-			{
-				pendIt.value().append(req);
-				return;
-			}
-			that->m_pendingAutomounts[authorityKey] = {req};
-
-			QUrl url;
-			url.setScheme(scheme);
-			url.setAuthority(authority);
-
-			const fuse_ino_t parentIno = parentDirNode->m_stat.st_ino;
-			that->mountUrl(url, [that, authorityKey, parentIno, authority](const QString &, int error) {
-				const auto reqs = that->m_pendingAutomounts.take(authorityKey);
-
-				if(error)
-				{
-					that->m_recentAutomountFailures[authorityKey] = std::chrono::steady_clock::now();
-					for(auto r : reqs)
-						fuse_reply_err(r, ENOENT);
-
-					qCWarning(KIOFUSE_LOG) << "Couldn't mount after retries" << authorityKey << error;
-					return;
-
-				}
-
-				auto parent = std::dynamic_pointer_cast<KIOFuseDirNode>(that->nodeForIno(parentIno));
-				auto child = parent ? that->nodeByName(parent, authority) : nullptr;
-				for(auto r : reqs)
-				{
-					if(child)
-					{
-						qCInfo(KIOFUSE_LOG) << "Mounted " << authorityKey;
-						that->replyEntry(r, child);
-					}
-					else
-					{
-						qCWarning(KIOFUSE_LOG) << "Mounted but child node not found for" << authorityKey;
-						fuse_reply_err(r, ENOENT);
-					}
-				}
-			});
-			return;
-		}
-
-		fuse_reply_err(req, ENOENT);
+		that->attemptAutomount(req, parentDirNode, nodeName);
 		return;
 	}
 
@@ -2231,6 +2232,22 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		// List the remote dir
 		auto refreshTime = std::chrono::steady_clock::now();
 		auto *job = KIO::listDir(remoteUrl(remoteNode));
+		connect(job, &KIO::ListJob::redirection, this, [=](KIO::Job *, const QUrl &newUrl) {
+			if(newUrl.userName().isEmpty())
+				return;
+			for(KIOFuseNode *cur = remoteNode.get(); cur; cur = nodeForIno(cur->m_parentIno).get())
+			{
+				auto origin = dynamic_cast<KIOFuseRemoteNodeInfo*>(cur);
+				if(!origin || origin->m_overrideUrl.isEmpty())
+					continue;
+				if(origin->m_overrideUrl.userName().isEmpty())
+				{
+					origin->m_overrideUrl.setUserName(newUrl.userName());
+					rememberUsername(origin->m_overrideUrl);
+				}
+				break;
+			}
+		});
 		connect(job, &KIO::ListJob::entries, this, [=](auto *job, const KIO::UDSEntryList &entries) {
 			for(auto &entry : entries)
 			{
