@@ -71,7 +71,13 @@ KIO::WorkerResult StubWorker::stat(const QUrl &url)
 
 KIO::WorkerResult StubWorker::listDir(const QUrl &url)
 {
-	Q_UNUSED(url);
+	if(url.host().startsWith(QLatin1String("auth")) && url.userName().isEmpty())
+	{
+		QUrl redirected = url;
+		redirected.setUserName(QStringLiteral("stubuser"));
+		redirection(redirected);
+		return KIO::WorkerResult::pass();
+	}
 
 	KIO::UDSEntry dotEntry;
 	dotEntry.fastInsert(KIO::UDSEntry::UDS_NAME, QStringLiteral("."));
@@ -84,6 +90,16 @@ KIO::WorkerResult StubWorker::listDir(const QUrl &url)
 	{
 		KIO::UDSEntry entry;
 		entry.fastInsert(KIO::UDSEntry::UDS_NAME, name);
+		entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFREG);
+		entry.fastInsert(KIO::UDSEntry::UDS_ACCESS, 0644);
+		entry.fastInsert(KIO::UDSEntry::UDS_SIZE, 0);
+		listEntry(entry);
+	}
+
+	if(!url.userName().isEmpty())
+	{
+		KIO::UDSEntry entry;
+		entry.fastInsert(KIO::UDSEntry::UDS_NAME, url.userName());
 		entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFREG);
 		entry.fastInsert(KIO::UDSEntry::UDS_ACCESS, 0644);
 		entry.fastInsert(KIO::UDSEntry::UDS_SIZE, 0);
