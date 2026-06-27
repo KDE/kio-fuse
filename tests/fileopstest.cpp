@@ -60,6 +60,9 @@ private Q_SLOTS:
 	void testAutomountSchemeDir();
 	void testAutomountUnknownProtocol();
 	void testAutomountFailedMount();
+	void testAutomountHostlessAuthority();
+	void testAutomountPersistsUsername();
+	void testAutomountInjectsUsername();
 
 
 private:
@@ -77,6 +80,7 @@ private:
 		                                              QStringLiteral("/org/kde/KIOFuse"),
 		                                              QDBusConnection::sessionBus()};
 	QTemporaryDir m_mountDir;
+	QTemporaryDir m_configDir;
 };
 
 void FileOpsTest::initTestCase()
@@ -91,6 +95,12 @@ void FileOpsTest::initTestCase()
 	if(!existingPluginPath.isEmpty())
 		newPluginPath += ':' + existingPluginPath;
 	qputenv("QT_PLUGIN_PATH", newPluginPath);
+	qputenv("XDG_CONFIG_HOME", m_configDir.path().toLocal8Bit());
+
+	QFile seed(m_configDir.path() + QStringLiteral("/kio-fuserc"));
+	QVERIFY(seed.open(QIODevice::WriteOnly));
+	seed.write("[Usernames]\nstub://injecthost=presetuser\n");
+	seed.close();
 
 	QProcess kiofuseProcess;
 	kiofuseProcess.setProgram(programpath);
@@ -1125,9 +1135,34 @@ void FileOpsTest::testAutomountFailedMount()
 	QCOMPARE(stat(qPrintable(failHost), &st), -1);
 	QCOMPARE(errno, ENOENT);
 
-	// Second lookup within the failure cache TTL. Still ENOENT.
+	// Repeated lookup, still ENOENT: the failure is cached as a negative entry.
 	QCOMPARE(stat(qPrintable(failHost), &st), -1);
 	QCOMPARE(errno, ENOENT);
+}
+
+void FileOpsTest::testAutomountHostlessAuthority()
+{
+	// An authority with a user but no host ("user@") is not a mountable origin.
+	const QString hostless = QStringLiteral("%1/stub/user@").arg(m_mountDir.path());
+
+	struct stat st;
+	QCOMPARE(stat(qPrintable(hostless), &st), -1);
+	QCOMPARE(errno, ENOENT);
+}
+
+void FileOpsTest::testAutomountPersistsUsername()
+{
+	QDir(QStringLiteral("%1/stub/authhost").arg(m_mountDir.path())).entryList(QDir::Files);
+
+	QFile rc(m_configDir.path() + QStringLiteral("/kio-fuserc"));
+	QVERIFY(rc.open(QIODevice::ReadOnly));
+	QVERIFY(rc.readAll().contains("stub://authhost=stubuser"));
+}
+
+void FileOpsTest::testAutomountInjectsUsername()
+{
+	const QStringList entries = QDir(QStringLiteral("%1/stub/injecthost").arg(m_mountDir.path())).entryList(QDir::Files);
+	QVERIFY(entries.contains(QStringLiteral("presetuser")));
 }
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
