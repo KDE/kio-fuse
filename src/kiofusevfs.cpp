@@ -178,6 +178,7 @@ static void rememberUsername(const QUrl &url)
 {
 	auto config = KSharedConfig::openConfig(QStringLiteral("kio-fuserc"));
 	config->group(QStringLiteral("Usernames")).writeEntry(usernameConfigKey(url), url.userName());
+	config->sync();
 }
 
 int KIOFuseVFS::signalFd[2];
