@@ -1103,7 +1103,7 @@ void FileOpsTest::testReadWrite4GBFile()
 	QVERIFY(mirroredFile.seek(qint64(4096)*1024*1024-6));
 	QCOMPARE(localFile2.read(20), mirroredFile.read(20));
 }
-#endif
+#endif // WASTE_DISK_SPACE
 
 void FileOpsTest::testAutomount()
 {
