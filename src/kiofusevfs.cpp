@@ -1601,7 +1601,7 @@ void KIOFuseVFS::attemptAutomount(fuse_req_t req, const std::shared_ptr<KIOFuseD
 		auto schemeDir = std::make_shared<KIOFuseDirNode>(KIOFuseIno::Root, nodeName, attr);
 		insertNode(schemeDir);
 		replyEntry(req, schemeDir);
-		qCInfo(KIOFUSE_LOG) << "Resuming mount for " << nodeName;
+		qCInfo(KIOFUSE_LOG) << "Created scheme dir " << nodeName;
 		return;
 	}
 
@@ -2233,6 +2233,9 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		// List the remote dir
 		auto refreshTime = std::chrono::steady_clock::now();
 		auto *job = KIO::listDir(remoteUrl(remoteNode));
+
+		// smb resolves auth by redirecting host to user@host. Remember the username
+		// so a later session reuses it instead of defaulting wrong and showing infinite auth prompts.
 		connect(job, &KIO::ListJob::redirection, this, [=](KIO::Job *, const QUrl &newUrl) {
 			if(newUrl.userName().isEmpty())
 				return;
