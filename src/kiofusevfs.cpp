@@ -1819,6 +1819,27 @@ QString KIOFuseVFS::virtualPath(const std::shared_ptr<KIOFuseNode> &node) const
 	return path.join(QLatin1Char('/'));
 }
 
+std::vector<KIOFuseVFS::MountInfo> KIOFuseVFS::mounts() const
+{
+	std::vector<MountInfo> ret;
+	for(const auto &nodePair : m_nodes)
+	{
+		const auto &node = nodePair.second;
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+			continue;
+
+		auto *originNode = dynamic_cast<KIOFuseRemoteNodeInfo*>(node.get());
+		if(!originNode || originNode->m_overrideUrl.isEmpty())
+			continue;
+
+		const QString path = virtualPath(node).mid(1);
+
+		ret.push_back({originNode->m_overrideUrl.adjusted(QUrl::RemovePassword), path});
+	}
+
+	return ret;
+}
+
 void KIOFuseVFS::fillStatForFile(struct stat &attr)
 {
 	static uid_t uid = getuid();

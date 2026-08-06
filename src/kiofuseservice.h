@@ -12,6 +12,7 @@
 #include <QDBusMessage>
 #include <QDBusContext>
 #include <QTemporaryDir>
+#include <QMap>
 #include <QStandardPaths>
 #include <QDBusAbstractAdaptor>
 
@@ -46,6 +47,8 @@ public Q_SLOTS:
 	QString mountUrl(const QString &remoteUrl, const QDBusMessage &message);
 	/** Converts a local path into a remote URL if it is mounted within the VFS */
 	QString remoteUrl(const QString &localPath);
+	/** Returns all current mounts, as a map of remote URL -> local path. */
+	QMap<QString, QString> mounts();
 
 private Q_SLOTS:
 	/** Stops the VFS when the DBus connection is lost. */

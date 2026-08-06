@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 
 #include <QDBusConnection>
+#include <QDBusMetaType>
 #include <QStandardPaths>
 #include <QDir>
 
@@ -90,6 +91,16 @@ QString KIOFuseService::remoteUrl(const QString& localPath)
 	return remoteUrl.toString(QUrl::RemovePassword);
 }
 
+QMap<QString, QString> KIOFuseService::mounts()
+{
+	QMap<QString, QString> ret;
+	for(const auto &mount : kiofusevfs.mounts())
+		ret.insert(mount.remoteUrl.toString(),
+		           m_mountpoint + QLatin1Char('/') + mount.virtualPath);
+
+	return ret;
+}
+
 void KIOFuseService::dbusDisconnected()
 {
 	qInfo(KIOFUSE_LOG) << "DBus disconnected - stopping.";
@@ -131,6 +142,8 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 
 bool KIOFuseService::registerService()
 {
+	qDBusRegisterMetaType<QMap<QString, QString>>();
+
 	if(QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
 	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAdaptors)
 	    && QDBusConnection::sessionBus().registerService(QStringLiteral("org.kde.KIOFuse")))

@@ -9,5 +9,9 @@
       <arg name="localPath" type="s" direction="in"/>
       <arg type="s" direction="out"/>
     </method>
+    <method name="mounts">
+      <arg type="a{ss}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QMap&lt;QString,QString&gt;"/>
+    </method>
   </interface>
 </node>

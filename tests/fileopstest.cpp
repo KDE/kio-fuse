@@ -16,6 +16,7 @@
 #include <QTemporaryFile>
 #include <QTest>
 #include <QtDBus/QDBusConnection>
+#include <QtDBus/QDBusMetaType>
 #include <QtDBus/QDBusReply>
 #include <QDebug>
 
@@ -53,6 +54,7 @@ private Q_SLOTS:
 	void testSymlinkRewrite();
 	void testNonemptyRmdir();
 	void testReadLocalOwnership();
+	void testMountsList();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -84,6 +86,8 @@ private:
 
 void FileOpsTest::initTestCase()
 {
+	qDBusRegisterMetaType<QMap<QString, QString>>();
+
 	// QTemporaryDir would otherwise rm -rf on destruction,
 	// which is fatal if umount fails while something is mounted inside
 	m_mountDir.setAutoRemove(false);
@@ -1153,6 +1157,22 @@ void FileOpsTest::testAutomountInjectsUsername()
 {
 	const QStringList entries = QDir(QStringLiteral("%1/stub/injecthost").arg(m_mountDir.path())).entryList(QDir::Files);
 	QVERIFY(entries.contains(QStringLiteral("presetuser")));
+}
+
+void FileOpsTest::testMountsList()
+{
+	const QString url = QStringLiteral("stub://listhost");
+	const QString localPath = m_kiofuse_iface.mountUrl(url).value();
+	QVERIFY(!localPath.isEmpty());
+
+	QDBusPendingReply<QMap<QString, QString>> reply = m_kiofuse_iface.mounts();
+	reply.waitForFinished();
+	QVERIFY(!reply.isError());
+
+	const QMap<QString, QString> mounts = reply.value();
+	QVERIFY2(mounts.contains(url), qPrintable(mounts.keys().join(QLatin1Char(' '))));
+	QCOMPARE(mounts.value(url), m_mountDir.path() + QStringLiteral("/stub/listhost"));
+	QCOMPARE(mounts.value(url), localPath);
 }
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
