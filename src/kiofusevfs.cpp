@@ -181,6 +181,13 @@ static void rememberUsername(const QUrl &url)
 	config->sync();
 }
 
+static QUrl originUrlOf(const KIOFuseNode *node)
+{
+	auto *remoteNode = dynamic_cast<const KIOFuseRemoteNodeInfo*>(node);
+	return remoteNode ? remoteNode->m_overrideUrl : QUrl{};
+}
+
+
 int KIOFuseVFS::signalFd[2];
 
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
@@ -1828,16 +1835,55 @@ std::vector<KIOFuseVFS::MountInfo> KIOFuseVFS::mounts() const
 		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
 			continue;
 
-		auto *originNode = dynamic_cast<KIOFuseRemoteNodeInfo*>(node.get());
-		if(!originNode || originNode->m_overrideUrl.isEmpty())
+		const QUrl origin = originUrlOf(node.get());
+		if(origin.isEmpty())
 			continue;
 
 		const QString path = virtualPath(node).mid(1);
 
-		ret.push_back({originNode->m_overrideUrl.adjusted(QUrl::RemovePassword), path});
+		ret.push_back({origin.adjusted(QUrl::RemovePassword), path});
 	}
 
 	return ret;
+}
+
+std::shared_ptr<KIOFuseNode> KIOFuseVFS::originNodeForUrl(const QUrl &url) const
+{
+	const QUrl target = url.adjusted(QUrl::RemovePassword);
+	for(const auto &nodePair : m_nodes)
+	{
+		const auto &node = nodePair.second;
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot)
+			continue;
+
+		const QUrl origin = originUrlOf(node.get());
+		if(!origin.isEmpty() && origin.adjusted(QUrl::RemovePassword) == target)
+			return node;
+	}
+
+	return nullptr;
+}
+
+void KIOFuseVFS::unmountUrl(const QUrl &url, const std::function<void(int)> &callback)
+{
+	auto node = originNodeForUrl(url);
+	if(!node)
+		return callback(ENOENT);
+
+	for(auto dirtyIno : m_dirtyNodes)
+	{
+		for(const KIOFuseNode *cur = nodeForIno(dirtyIno).get(); cur; cur = nodeForIno(cur->m_parentIno).get())
+		{
+			if(cur == node.get())
+			{
+				qWarning(KIOFUSE_LOG) << "Refusing to unmount" << url.toDisplayString() << "with unflushed writes";
+				return callback(EBUSY);
+			}
+		}
+	}
+
+	markNodeDeleted(node);
+	callback(0);
 }
 
 void KIOFuseVFS::fillStatForFile(struct stat &attr)

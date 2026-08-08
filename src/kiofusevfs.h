@@ -64,6 +64,8 @@ public:
 		QString virtualPath;
 	};
 	std::vector<MountInfo> mounts() const;
+	/** Tears down the origin matching url. Passes 0, ENOENT or EBUSY to the callback. */
+	void unmountUrl(const QUrl &url, const std::function<void(int)> &callback);
 
 private Q_SLOTS:
 	void fuseRequestPending();
@@ -110,6 +112,8 @@ private:
 
 	/** Returns a pointer to a child node of parent with m_nodeName == name or nullptr. */
 	std::shared_ptr<KIOFuseNode> nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString &name) const;
+	/** Returns the origin matching url ignoring the password, or nullptr. */
+	std::shared_ptr<KIOFuseNode> originNodeForUrl(const QUrl &url) const;
 	/** Returns a pointer to the KIOFuseNode with inode number ino or nullptr. */
 	std::shared_ptr<KIOFuseNode> nodeForIno(const fuse_ino_t ino) const;
 	/** Removes the node from the old parent's children list (if any) and adds it to the new parent's list.*/

@@ -101,6 +101,21 @@ QMap<QString, QString> KIOFuseService::mounts()
 	return ret;
 }
 
+void KIOFuseService::unmountUrl(const QString& remoteUrl)
+{
+	const QUrl url = QUrl::fromUserInput(remoteUrl);
+	kiofusevfs.unmountUrl(url, [this, url] (int error) {
+		if(!error)
+			return;
+
+		QUrl displayUrl = url;
+		displayUrl.setPassword({});
+		sendErrorReply(error == EBUSY ? QStringLiteral("org.kde.KIOFuse.VFS.Error.MountBusy")
+		                              : QStringLiteral("org.kde.KIOFuse.VFS.Error.NotMounted"),
+		               QStringLiteral("KIOFuse failed to unmount %1: %2").arg(displayUrl.toString(), QLatin1String(strerror(error))));
+	});
+}
+
 void KIOFuseService::dbusDisconnected()
 {
 	qInfo(KIOFUSE_LOG) << "DBus disconnected - stopping.";

@@ -49,6 +49,8 @@ public Q_SLOTS:
 	QString remoteUrl(const QString &localPath);
 	/** Returns all current mounts, as a map of remote URL -> local path. */
 	QMap<QString, QString> mounts();
+	/** Unmounts a single mount, fails if it isn't mounted or has unflushed writes. */
+	void unmountUrl(const QString &remoteUrl);
 
 private Q_SLOTS:
 	/** Stops the VFS when the DBus connection is lost. */

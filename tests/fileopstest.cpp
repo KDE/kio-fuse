@@ -55,6 +55,7 @@ private Q_SLOTS:
 	void testNonemptyRmdir();
 	void testReadLocalOwnership();
 	void testMountsList();
+	void testUnmount();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -1173,6 +1174,29 @@ void FileOpsTest::testMountsList()
 	QVERIFY2(mounts.contains(url), qPrintable(mounts.keys().join(QLatin1Char(' '))));
 	QCOMPARE(mounts.value(url), m_mountDir.path() + QStringLiteral("/stub/listhost"));
 	QCOMPARE(mounts.value(url), localPath);
+}
+
+void FileOpsTest::testUnmount()
+{
+	QDBusPendingReply<> notMounted = m_kiofuse_iface.unmountUrl(QStringLiteral("stub://neverhost"));
+	notMounted.waitForFinished();
+	QVERIFY(notMounted.isError());
+	QCOMPARE(notMounted.error().name(), QStringLiteral("org.kde.KIOFuse.VFS.Error.NotMounted"));
+
+	const QString url = QStringLiteral("stub://unmounthost");
+	QVERIFY(!m_kiofuse_iface.mountUrl(url).value().isEmpty());
+
+	QDBusPendingReply<QMap<QString, QString>> reply = m_kiofuse_iface.mounts();
+	reply.waitForFinished();
+	QVERIFY(reply.value().contains(url));
+
+	QDBusPendingReply<> unmount = m_kiofuse_iface.unmountUrl(url);
+	unmount.waitForFinished();
+	QVERIFY2(!unmount.isError(), qPrintable(unmount.error().message()));
+
+	reply = m_kiofuse_iface.mounts();
+	reply.waitForFinished();
+	QVERIFY(!reply.value().contains(url));
 }
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
