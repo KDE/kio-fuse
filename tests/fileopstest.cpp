@@ -14,6 +14,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QSignalSpy>
 #include <QTest>
 #include <QtDBus/QDBusConnection>
 #include <QtDBus/QDBusMetaType>
@@ -56,6 +57,7 @@ private Q_SLOTS:
 	void testReadLocalOwnership();
 	void testMountsList();
 	void testUnmount();
+	void testMountNotifications();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -119,6 +121,8 @@ void FileOpsTest::initTestCase()
 	QVERIFY(kiofuseProcess.waitForFinished());
 	QCOMPARE(kiofuseProcess.exitStatus(),  QProcess::NormalExit);
 	QCOMPARE(kiofuseProcess.exitCode(), 0);
+	QTRY_VERIFY(m_kiofuse_iface.isValid());
+	QTRY_VERIFY(m_kiofuseprivate_iface.isValid());
 }
 
 void FileOpsTest::cleanupTestCase()
@@ -1197,6 +1201,33 @@ void FileOpsTest::testUnmount()
 	reply = m_kiofuse_iface.mounts();
 	reply.waitForFinished();
 	QVERIFY(!reply.value().contains(url));
+}
+
+void FileOpsTest::testMountNotifications()
+{
+	QSignalSpy addedSpy(&m_kiofuse_iface, &org::kde::KIOFuse::VFS::mountAdded);
+	QSignalSpy removedSpy(&m_kiofuse_iface, &org::kde::KIOFuse::VFS::mountRemoved);
+
+	const QString url = QStringLiteral("stub://notifyhost");
+	const QString localPath = m_kiofuse_iface.mountUrl(url).value();
+	QVERIFY(!localPath.isEmpty());
+
+	QVERIFY(addedSpy.wait());
+	QCOMPARE(addedSpy.count(), 1);
+	QCOMPARE(addedSpy.first().at(0).toString(), url);
+	QCOMPARE(addedSpy.first().at(1).toString(), localPath);
+
+	QVERIFY(!m_kiofuse_iface.mountUrl(url).value().isEmpty());
+	QVERIFY(!addedSpy.wait(500));
+	QCOMPARE(addedSpy.count(), 1);
+
+	QDBusPendingReply<> unmount = m_kiofuse_iface.unmountUrl(url);
+	unmount.waitForFinished();
+	QVERIFY2(!unmount.isError(), qPrintable(unmount.error().message()));
+
+	QVERIFY(removedSpy.wait());
+	QCOMPARE(removedSpy.count(), 1);
+	QCOMPARE(removedSpy.first().at(0).toString(), url);
 }
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)

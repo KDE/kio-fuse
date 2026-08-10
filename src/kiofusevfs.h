@@ -67,6 +67,10 @@ public:
 	/** Tears down the origin matching url. Passes 0, ENOENT or EBUSY to the callback. */
 	void unmountUrl(const QUrl &url, const std::function<void(int)> &callback);
 
+Q_SIGNALS:
+	void mounted(const QUrl &remoteUrl, const QString &virtualPath);
+	void unmounted(const QUrl &remoteUrl);
+
 private Q_SLOTS:
 	void fuseRequestPending();
 	void exitHandler();

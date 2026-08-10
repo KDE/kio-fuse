@@ -493,9 +493,16 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 			return;
 		}
 
+		const bool wasMounted = !originNode->m_overrideUrl.isEmpty();
+
 		originNode->m_overrideUrl = url; // Allow the user to change the password
 		if(url.userName().isEmpty())
 			originNode->m_overrideUrl.setUserName(storedUsername(url));
+
+		if(!wasMounted)
+			Q_EMIT mounted(originNode->m_overrideUrl.adjusted(QUrl::RemovePassword),
+			               targetPathComponents.join(QLatin1Char('/')));
+
 		callback((targetPathComponents + pathElements).join(QLatin1Char('/')), 0);
 		return;
 	});
@@ -1940,6 +1947,10 @@ void KIOFuseVFS::markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node)
 	}
 
 	qDebug(KIOFUSE_LOG) << "Marking node" << node->m_nodeName << "as deleted";
+
+	const QUrl origin = originUrlOf(node.get());
+	if(!origin.isEmpty())
+		Q_EMIT unmounted(origin.adjusted(QUrl::RemovePassword));
 
 	reparentNode(node, KIOFuseIno::DeletedRoot);
 	node->m_stat.st_nlink = 0; // Node is no longer linked anywhere

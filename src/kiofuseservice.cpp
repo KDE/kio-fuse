@@ -57,6 +57,13 @@ bool KIOFuseService::start(struct fuse_args &args, const QString &mountpoint, bo
 		// Don't do a mkdir here, we assume that any given mountpoint dir already exists.
 		m_mountpoint = mountpoint;
 
+	connect(&kiofusevfs, &KIOFuseVFS::mounted, this, [this](const QUrl &remoteUrl, const QString &virtualPath) {
+		Q_EMIT mountAdded(remoteUrl.toString(), m_mountpoint + QLatin1Char('/') + virtualPath);
+	});
+	connect(&kiofusevfs, &KIOFuseVFS::unmounted, this, [this](const QUrl &remoteUrl) {
+		Q_EMIT mountRemoved(remoteUrl.toString());
+	});
+
 	if(!kiofusevfs.start(args, m_mountpoint))
 		return false;
 
@@ -160,7 +167,8 @@ bool KIOFuseService::registerService()
 	qDBusRegisterMetaType<QMap<QString, QString>>();
 
 	if(QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
-	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAdaptors)
+	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals
+	                                                        | QDBusConnection::ExportAdaptors)
 	    && QDBusConnection::sessionBus().registerService(QStringLiteral("org.kde.KIOFuse")))
 	{
 		QDBusConnection::sessionBus().connect({}, QStringLiteral("/org/freedesktop/DBus/Local"), QStringLiteral("org.freedesktop.DBus.Local"), QStringLiteral("Disconnected"), this, SLOT(dbusDisconnected()));

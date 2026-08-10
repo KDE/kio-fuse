@@ -52,6 +52,10 @@ public Q_SLOTS:
 	/** Unmounts a single mount, fails if it isn't mounted or has unflushed writes. */
 	void unmountUrl(const QString &remoteUrl);
 
+Q_SIGNALS:
+	void mountAdded(const QString &remoteUrl, const QString &localPath);
+	void mountRemoved(const QString &remoteUrl);
+
 private Q_SLOTS:
 	/** Stops the VFS when the DBus connection is lost. */
 	void dbusDisconnected();
