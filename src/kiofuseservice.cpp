@@ -59,10 +59,10 @@ bool KIOFuseService::start(struct fuse_args &args, const QString &mountpoint, bo
 
 	connect(&kiofusevfs, &KIOFuseVFS::mounted, this, [this](const QUrl &remoteUrl, const QString &virtualPath) {
 		Q_EMIT mountAdded(remoteUrl.toString(), m_mountpoint + QLatin1Char('/') + virtualPath);
-	});
+	}, Qt::QueuedConnection);
 	connect(&kiofusevfs, &KIOFuseVFS::unmounted, this, [this](const QUrl &remoteUrl) {
 		Q_EMIT mountRemoved(remoteUrl.toString());
-	});
+	}, Qt::QueuedConnection);
 
 	if(!kiofusevfs.start(args, m_mountpoint))
 		return false;

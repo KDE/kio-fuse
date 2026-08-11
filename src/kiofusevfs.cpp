@@ -187,7 +187,6 @@ static QUrl originUrlOf(const KIOFuseNode *node)
 	return remoteNode ? remoteNode->m_overrideUrl : QUrl{};
 }
 
-
 int KIOFuseVFS::signalFd[2];
 
 KIOFuseVFS::KIOFuseVFS(QObject *parent)

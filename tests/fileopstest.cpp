@@ -18,6 +18,7 @@
 #include <QTest>
 #include <QtDBus/QDBusConnection>
 #include <QtDBus/QDBusMetaType>
+#include <QtDBus/QDBusPendingCallWatcher>
 #include <QtDBus/QDBusReply>
 #include <QDebug>
 
@@ -58,6 +59,7 @@ private Q_SLOTS:
 	void testMountsList();
 	void testUnmount();
 	void testMountNotifications();
+	void testNotificationOrder();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -1228,6 +1230,27 @@ void FileOpsTest::testMountNotifications()
 	QVERIFY(removedSpy.wait());
 	QCOMPARE(removedSpy.count(), 1);
 	QCOMPARE(removedSpy.first().at(0).toString(), url);
+}
+
+void FileOpsTest::testNotificationOrder()
+{
+	const QString url = QStringLiteral("stub://orderhost");
+	QVERIFY(!m_kiofuse_iface.mountUrl(url).value().isEmpty());
+
+	QStringList arrivals;
+	QObject context;
+	connect(&m_kiofuse_iface, &org::kde::KIOFuse::VFS::mountRemoved, &context, [&arrivals](const QString &) {
+		arrivals << QStringLiteral("signal");
+	});
+
+	QDBusPendingCallWatcher watcher(m_kiofuse_iface.unmountUrl(url));
+	connect(&watcher, &QDBusPendingCallWatcher::finished, &context, [&arrivals] {
+		arrivals << QStringLiteral("reply");
+	});
+
+	QTRY_COMPARE(arrivals.size(), 2);
+
+	QCOMPARE(arrivals, QStringList({QStringLiteral("reply"), QStringLiteral("signal")}));
 }
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)
