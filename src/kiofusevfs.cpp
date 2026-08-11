@@ -1609,7 +1609,6 @@ void KIOFuseVFS::attemptAutomount(fuse_req_t req, const std::shared_ptr<KIOFuseD
 	{
 		const QString scheme = parentDirNode->m_nodeName;
 		const QString authority = nodeName;
-		const QString authorityKey = scheme + QStringLiteral("://") + authority;
 
 		QUrl url;
 		url.setScheme(scheme);
@@ -1620,6 +1619,8 @@ void KIOFuseVFS::attemptAutomount(fuse_req_t req, const std::shared_ptr<KIOFuseD
 			fuse_reply_err(req, ENOENT);
 			return;
 		}
+
+		const QString authorityKey = url.toString();
 
 		mountUrl(url, [this, authorityKey, parentDirNode, authority, req](const QString &, int error) {
 			if(error)
