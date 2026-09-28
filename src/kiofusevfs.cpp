@@ -181,6 +181,24 @@ static void rememberUsername(const QUrl &url)
 	config->sync();
 }
 
+static bool isOrigin(const KIOFuseNode *node)
+{
+	auto *dirNode = dynamic_cast<const KIOFuseRemoteDirNode*>(node);
+	return dirNode && !dirNode->m_overrideUrl.isEmpty();
+}
+
+static QUrl originUrlAt(const QStringList &pathComponents)
+{
+	QUrl url;
+	url.setScheme(pathComponents.constFirst());
+	if(pathComponents.size() > 1)
+		url.setAuthority(pathComponents[1]);
+	else
+		url.setPath(QStringLiteral("/"));
+
+	return url;
+}
+
 int KIOFuseVFS::signalFd[2];
 
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
@@ -486,9 +504,16 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 			return;
 		}
 
+		const bool wasMounted = !originNode->m_overrideUrl.isEmpty();
+
 		originNode->m_overrideUrl = url; // Allow the user to change the password
 		if(url.userName().isEmpty())
 			originNode->m_overrideUrl.setUserName(storedUsername(url));
+
+		if(!wasMounted)
+			Q_EMIT mounted(originUrlAt(targetPathComponents),
+			               targetPathComponents.join(QLatin1Char('/')));
+
 		callback((targetPathComponents + pathElements).join(QLatin1Char('/')), 0);
 		return;
 	});
@@ -1807,6 +1832,58 @@ QString KIOFuseVFS::virtualPath(const std::shared_ptr<KIOFuseNode> &node) const
 	return path.join(QLatin1Char('/'));
 }
 
+std::vector<KIOFuseVFS::MountInfo> KIOFuseVFS::mounts() const
+{
+	std::vector<MountInfo> ret;
+	for(const auto &nodePair : m_nodes)
+	{
+		const auto &node = nodePair.second;
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot || !isOrigin(node.get()))
+			continue;
+
+		const QString path = virtualPath(node).mid(1);
+
+		ret.push_back({originUrlAt(path.split(QLatin1Char('/'))), path});
+	}
+
+	return ret;
+}
+
+std::shared_ptr<KIOFuseNode> KIOFuseVFS::originNodeForUrl(const QUrl &url) const
+{
+	auto node = nodeForIno(KIOFuseIno::Root);
+	for(const QString &name : mapUrlToVfs(originOfUrl(url)))
+	{
+		auto dirNode = std::dynamic_pointer_cast<KIOFuseDirNode>(node);
+		if(!dirNode || !(node = nodeByName(dirNode, name)))
+			return nullptr;
+	}
+
+	return isOrigin(node.get()) ? node : nullptr;
+}
+
+int KIOFuseVFS::unmountUrl(const QUrl &url)
+{
+	auto node = originNodeForUrl(url);
+	if(!node)
+		return ENOENT;
+
+	for(auto dirtyIno : m_dirtyNodes)
+	{
+		for(const KIOFuseNode *cur = nodeForIno(dirtyIno).get(); cur; cur = nodeForIno(cur->m_parentIno).get())
+		{
+			if(cur == node.get())
+			{
+				qWarning(KIOFUSE_LOG) << "Refusing to unmount" << url.toDisplayString() << "with unflushed writes";
+				return EBUSY;
+			}
+		}
+	}
+
+	markNodeDeleted(node);
+	return 0;
+}
+
 void KIOFuseVFS::fillStatForFile(struct stat &attr)
 {
 	static uid_t uid = getuid();
@@ -1861,6 +1938,9 @@ void KIOFuseVFS::markNodeDeleted(const std::shared_ptr<KIOFuseNode> &node)
 	}
 
 	qDebug(KIOFUSE_LOG) << "Marking node" << node->m_nodeName << "as deleted";
+
+	if(isOrigin(node.get()))
+		Q_EMIT unmounted(originUrlAt(virtualPath(node).mid(1).split(QLatin1Char('/'))));
 
 	reparentNode(node, KIOFuseIno::DeletedRoot);
 	node->m_stat.st_nlink = 0; // Node is no longer linked anywhere

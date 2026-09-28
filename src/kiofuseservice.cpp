@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 
 #include <QDBusConnection>
+#include <QDBusMetaType>
 #include <QStandardPaths>
 #include <QDir>
 
@@ -56,6 +57,13 @@ bool KIOFuseService::start(struct fuse_args &args, const QString &mountpoint, bo
 		// Don't do a mkdir here, we assume that any given mountpoint dir already exists.
 		m_mountpoint = mountpoint;
 
+	connect(&kiofusevfs, &KIOFuseVFS::mounted, this, [this](const QUrl &remoteUrl, const QString &virtualPath) {
+		Q_EMIT mountAdded(remoteUrl.toString(), QDir(m_mountpoint).filePath(virtualPath));
+	}, Qt::QueuedConnection);
+	connect(&kiofusevfs, &KIOFuseVFS::unmounted, this, [this](const QUrl &remoteUrl) {
+		Q_EMIT mountRemoved(remoteUrl.toString());
+	}, Qt::QueuedConnection);
+
 	if(!kiofusevfs.start(args, m_mountpoint))
 		return false;
 
@@ -88,6 +96,24 @@ QString KIOFuseService::remoteUrl(const QString& localPath)
 	}
 
 	return remoteUrl.toString(QUrl::RemovePassword);
+}
+
+QMap<QString, QString> KIOFuseService::mounts()
+{
+	QMap<QString, QString> ret;
+	for(const auto &mount : kiofusevfs.mounts())
+		ret.insert(mount.remoteUrl.toString(), QDir(m_mountpoint).filePath(mount.virtualPath));
+
+	return ret;
+}
+
+void KIOFuseService::unmountUrl(const QString& remoteUrl)
+{
+	const QUrl url = QUrl::fromUserInput(remoteUrl);
+	if(const int error = kiofusevfs.unmountUrl(url))
+		sendErrorReply(error == EBUSY ? QStringLiteral("org.kde.KIOFuse.VFS.Error.MountBusy")
+		                              : QStringLiteral("org.kde.KIOFuse.VFS.Error.NotMounted"),
+		               QStringLiteral("KIOFuse failed to unmount %1: %2").arg(url.toString(QUrl::RemovePassword), QLatin1String(strerror(error))));
 }
 
 void KIOFuseService::dbusDisconnected()
@@ -131,8 +157,11 @@ QString KIOFuseService::mountUrl(const QString& remoteUrl, const QDBusMessage& m
 
 bool KIOFuseService::registerService()
 {
+	qDBusRegisterMetaType<QMap<QString, QString>>();
+
 	if(QDBusConnection::sessionBus().registerObject(QStringLiteral("/org/kde/KIOFuse"), this,
-	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAdaptors)
+	                                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals
+	                                                        | QDBusConnection::ExportAdaptors)
 	    && QDBusConnection::sessionBus().registerService(QStringLiteral("org.kde.KIOFuse")))
 	{
 		QDBusConnection::sessionBus().connect({}, QStringLiteral("/org/freedesktop/DBus/Local"), QStringLiteral("org.freedesktop.DBus.Local"), QStringLiteral("Disconnected"), this, SLOT(dbusDisconnected()));

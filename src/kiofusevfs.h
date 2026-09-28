@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <unordered_map>
+#include <vector>
 
 #include <QEventLoopLocker>
 #include <QObject>
@@ -56,6 +57,19 @@ public:
 	QUrl localPathToRemoteUrl(const QString &localPath) const;
 	/** Returns the path upwards until a root node. */
 	QString virtualPath(const std::shared_ptr<KIOFuseNode> &node) const;
+	struct MountInfo {
+		/** Location of the origin as a URL. */
+		QUrl remoteUrl;
+		/** Where the origin is reachable, relative to the VFS root. */
+		QString virtualPath;
+	};
+	std::vector<MountInfo> mounts() const;
+	/** Tears down the origin matching url. Returns 0, ENOENT or EBUSY. */
+	int unmountUrl(const QUrl &url);
+
+Q_SIGNALS:
+	void mounted(const QUrl &remoteUrl, const QString &virtualPath);
+	void unmounted(const QUrl &remoteUrl);
 
 private Q_SLOTS:
 	void fuseRequestPending();
@@ -102,6 +116,8 @@ private:
 
 	/** Returns a pointer to a child node of parent with m_nodeName == name or nullptr. */
 	std::shared_ptr<KIOFuseNode> nodeByName(const std::shared_ptr<KIOFuseDirNode> &parent, const QString &name) const;
+	/** Returns the origin url belongs to, or nullptr. */
+	std::shared_ptr<KIOFuseNode> originNodeForUrl(const QUrl &url) const;
 	/** Returns a pointer to the KIOFuseNode with inode number ino or nullptr. */
 	std::shared_ptr<KIOFuseNode> nodeForIno(const fuse_ino_t ino) const;
 	/** Removes the node from the old parent's children list (if any) and adds it to the new parent's list.*/
@@ -152,9 +168,9 @@ private:
 	void awaitChildMounted(const std::shared_ptr<KIOFuseRemoteDirNode> &node, const QString &name, const std::function<void(const std::shared_ptr<KIOFuseNode>&, int)> &callback);
 
 	/** Returns the URL pointing to the origin of the linked resource, i.e. path set to / or empty. */
-	QUrl originOfUrl(const QUrl &url);
+	static QUrl originOfUrl(const QUrl &url);
 	/** Returns the path elements where the URL url gets mapped to in this VFS. */
-	QStringList mapUrlToVfs(const QUrl &url);
+	static QStringList mapUrlToVfs(const QUrl &url);
 	/** Stats url. If successful, returns the path where url + pathElements is reachable in callback.
 	  * If it failed, it moves one part of pathElements to url and tries again, recursively. */
 	void findAndCreateOrigin(const QUrl &url, const QStringList &pathElements, const std::function<void(const QString&, int)> &callback);
