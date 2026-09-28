@@ -14,8 +14,11 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QSignalSpy>
 #include <QTest>
 #include <QtDBus/QDBusConnection>
+#include <QtDBus/QDBusMetaType>
+#include <QtDBus/QDBusPendingCallWatcher>
 #include <QtDBus/QDBusReply>
 #include <QDebug>
 
@@ -53,6 +56,11 @@ private Q_SLOTS:
 	void testSymlinkRewrite();
 	void testNonemptyRmdir();
 	void testReadLocalOwnership();
+	void testMounts();
+	void testMountNotifications();
+	void testNotificationOrder();
+	void testMountIdentityIgnoresSubpath();
+	void testMountIdentitySurvivesUsernameInjection();
 #ifdef WASTE_DISK_SPACE
 	void testReadWrite4GBFile();
 #endif // WASTE_DISK_SPACE
@@ -84,6 +92,8 @@ private:
 
 void FileOpsTest::initTestCase()
 {
+	qDBusRegisterMetaType<QMap<QString, QString>>();
+
 	// QTemporaryDir would otherwise rm -rf on destruction,
 	// which is fatal if umount fails while something is mounted inside
 	m_mountDir.setAutoRemove(false);
@@ -114,6 +124,8 @@ void FileOpsTest::initTestCase()
 	QVERIFY(kiofuseProcess.waitForFinished());
 	QCOMPARE(kiofuseProcess.exitStatus(),  QProcess::NormalExit);
 	QCOMPARE(kiofuseProcess.exitCode(), 0);
+	QTRY_VERIFY(m_kiofuse_iface.isValid());
+	QTRY_VERIFY(m_kiofuseprivate_iface.isValid());
 }
 
 void FileOpsTest::cleanupTestCase()
@@ -1165,6 +1177,87 @@ void FileOpsTest::testAutomountInjectsUsername()
 {
 	const QStringList entries = QDir(QStringLiteral("%1/stub/injecthost").arg(m_mountDir.path())).entryList(QDir::Files);
 	QVERIFY(entries.contains(QStringLiteral("presetuser")));
+}
+
+void FileOpsTest::testMounts()
+{
+	QDBusPendingReply<QMap<QString, QString>> reply = m_kiofuse_iface.mounts();
+	reply.waitForFinished();
+	QVERIFY(!reply.value().contains(QStringLiteral("stub://neverhost")));
+
+	const QString url = QStringLiteral("stub://mountshost");
+	const QString localPath = m_kiofuse_iface.mountUrl(url).value();
+	QVERIFY(!localPath.isEmpty());
+
+	reply = m_kiofuse_iface.mounts();
+	reply.waitForFinished();
+	QCOMPARE(reply.value().value(url), localPath);
+}
+
+void FileOpsTest::testMountNotifications()
+{
+	QSignalSpy addedSpy(&m_kiofuse_iface, &org::kde::KIOFuse::VFS::mountAdded);
+
+	const QString url = QStringLiteral("stub://notifyhost");
+	const QString localPath = m_kiofuse_iface.mountUrl(url).value();
+	QVERIFY(!localPath.isEmpty());
+
+	QVERIFY(addedSpy.wait());
+	QCOMPARE(addedSpy.count(), 1);
+	QCOMPARE(addedSpy.first().at(0).toString(), url);
+	QCOMPARE(addedSpy.first().at(1).toString(), localPath);
+}
+
+void FileOpsTest::testNotificationOrder()
+{
+	const QString url = QStringLiteral("stub://orderhost");
+
+	QStringList arrivals;
+	QObject context;
+	connect(&m_kiofuse_iface, &org::kde::KIOFuse::VFS::mountAdded, &context, [&arrivals](const QString &, const QString &) {
+		arrivals << QStringLiteral("signal");
+	});
+
+	QDBusPendingCallWatcher watcher(m_kiofuse_iface.mountUrl(url));
+	connect(&watcher, &QDBusPendingCallWatcher::finished, &context, [&arrivals] {
+		arrivals << QStringLiteral("reply");
+	});
+
+	QTRY_COMPARE(arrivals.size(), 2);
+
+	QCOMPARE(arrivals, QStringList({QStringLiteral("reply"), QStringLiteral("signal")}));
+}
+
+void FileOpsTest::testMountIdentityIgnoresSubpath()
+{
+	const QString url = QStringLiteral("stub://pathhost");
+	QSignalSpy addedSpy(&m_kiofuse_iface, &org::kde::KIOFuse::VFS::mountAdded);
+
+	QVERIFY(!m_kiofuse_iface.mountUrl(url + QStringLiteral("/sub")).value().isEmpty());
+
+	QVERIFY(addedSpy.wait());
+	QCOMPARE(addedSpy.count(), 1);
+	QCOMPARE(addedSpy.first().at(0).toString(), url);
+
+	QVERIFY(!m_kiofuse_iface.mountUrl(url).value().isEmpty());
+	QVERIFY(!addedSpy.wait(500));
+
+	QDBusPendingReply<QMap<QString, QString>> reply = m_kiofuse_iface.mounts();
+	reply.waitForFinished();
+	QCOMPARE(reply.value().value(url), m_mountDir.path() + QStringLiteral("/stub/pathhost"));
+}
+
+void FileOpsTest::testMountIdentitySurvivesUsernameInjection()
+{
+	const QString url = QStringLiteral("stub://authidhost");
+	const QString localPath = m_kiofuse_iface.mountUrl(url).value();
+	QVERIFY(!localPath.isEmpty());
+
+	QVERIFY(QDir(localPath).entryList(QDir::Files).contains(QStringLiteral("stubuser")));
+
+	QDBusPendingReply<QMap<QString, QString>> reply = m_kiofuse_iface.mounts();
+	reply.waitForFinished();
+	QCOMPARE(reply.value().value(url), localPath);
 }
 
 QDateTime FileOpsTest::roundDownToSecond(const QDateTime &dt)

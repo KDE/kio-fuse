@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <unordered_map>
+#include <vector>
 
 #include <QEventLoopLocker>
 #include <QObject>
@@ -56,6 +57,16 @@ public:
 	QUrl localPathToRemoteUrl(const QString &localPath) const;
 	/** Returns the path upwards until a root node. */
 	QString virtualPath(const std::shared_ptr<KIOFuseNode> &node) const;
+	struct MountInfo {
+		/** Location of the origin as a URL. */
+		QUrl remoteUrl;
+		/** Where the origin is reachable, relative to the VFS root. */
+		QString virtualPath;
+	};
+	std::vector<MountInfo> mounts() const;
+
+Q_SIGNALS:
+	void mounted(const QUrl &remoteUrl, const QString &virtualPath);
 
 private Q_SLOTS:
 	void fuseRequestPending();

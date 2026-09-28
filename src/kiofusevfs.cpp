@@ -181,6 +181,24 @@ static void rememberUsername(const QUrl &url)
 	config->sync();
 }
 
+static bool isOrigin(const KIOFuseNode *node)
+{
+	auto *dirNode = dynamic_cast<const KIOFuseRemoteDirNode*>(node);
+	return dirNode && !dirNode->m_overrideUrl.isEmpty();
+}
+
+static QUrl originUrlAt(const QStringList &pathComponents)
+{
+	QUrl url;
+	url.setScheme(pathComponents.constFirst());
+	if(pathComponents.size() > 1)
+		url.setAuthority(pathComponents[1]);
+	else
+		url.setPath(QStringLiteral("/"));
+
+	return url;
+}
+
 int KIOFuseVFS::signalFd[2];
 
 KIOFuseVFS::KIOFuseVFS(QObject *parent)
@@ -486,9 +504,16 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 			return;
 		}
 
+		const bool wasMounted = !originNode->m_overrideUrl.isEmpty();
+
 		originNode->m_overrideUrl = url; // Allow the user to change the password
 		if(url.userName().isEmpty())
 			originNode->m_overrideUrl.setUserName(storedUsername(url));
+
+		if(!wasMounted)
+			Q_EMIT mounted(originUrlAt(targetPathComponents),
+			               targetPathComponents.join(QLatin1Char('/')));
+
 		callback((targetPathComponents + pathElements).join(QLatin1Char('/')), 0);
 		return;
 	});
@@ -1805,6 +1830,23 @@ QString KIOFuseVFS::virtualPath(const std::shared_ptr<KIOFuseNode> &node) const
 		path.prepend(currentNode->m_nodeName);
 
 	return path.join(QLatin1Char('/'));
+}
+
+std::vector<KIOFuseVFS::MountInfo> KIOFuseVFS::mounts() const
+{
+	std::vector<MountInfo> ret;
+	for(const auto &nodePair : m_nodes)
+	{
+		const auto &node = nodePair.second;
+		if(node->m_parentIno == KIOFuseIno::DeletedRoot || !isOrigin(node.get()))
+			continue;
+
+		const QString path = virtualPath(node).mid(1);
+
+		ret.push_back({originUrlAt(path.split(QLatin1Char('/'))), path});
+	}
+
+	return ret;
 }
 
 void KIOFuseVFS::fillStatForFile(struct stat &attr)
