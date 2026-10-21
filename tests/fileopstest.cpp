@@ -42,6 +42,7 @@ private Q_SLOTS:
 	void testDeletionOps();
 	void testArchiveOps();
 	void testArchiveSurvivesListingItsParent();
+	void testArchiveIsReadOnly();
 	void testManWorkaround();
 	void testKioErrorMapping();
 	void testRootLookup();
@@ -745,6 +746,49 @@ void FileOpsTest::testArchiveSurvivesListingItsParent()
 	QCOMPARE(after.st_ino, before.st_ino);
 
 	QFile outerfile(mountedArchive + QStringLiteral("/outerarchive/outerfile"));
+	QVERIFY(outerfile.open(QIODevice::ReadOnly));
+	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
+}
+
+void FileOpsTest::testArchiveIsReadOnly()
+{
+	// The archive workers cannot write, so a mounted archive is read-only like any read-only
+	// file system, instead of failing each write later through KIO.
+	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("tar")))
+	{
+		// kio-extras is a dependency on the KDE CI, so the test has to run there.
+		if (qEnvironmentVariableIsSet("KDECI_BUILD"))
+			QFAIL("The tar protocol is missing, see README for packages required.");
+		QSKIP("Test requires tar protocol to be supported. See README for packages required.");
+	}
+
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString archivePath = dir.filePath(QStringLiteral("archive.tar.gz"));
+	QVERIFY(QFile::copy(QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz")), archivePath));
+
+	const QString mountedArchive = m_kiofuse_iface.mountUrl(QStringLiteral("tar://%1").arg(archivePath)).value();
+	QVERIFY(!mountedArchive.isEmpty());
+	const QString folder = mountedArchive + QStringLiteral("/outerarchive");
+	const QString file = folder + QStringLiteral("/outerfile");
+
+	struct stat attr = {};
+	QCOMPARE(stat(file.toUtf8().constData(), &attr), 0);
+	QCOMPARE(attr.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH), mode_t(0));
+	QCOMPARE(stat(folder.toUtf8().constData(), &attr), 0);
+	QCOMPARE(attr.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH), mode_t(0));
+
+	QCOMPARE(open(file.toUtf8().constData(), O_WRONLY), -1);
+	QCOMPARE(errno, EROFS);
+	QCOMPARE(mkdir((folder + QStringLiteral("/newfolder")).toUtf8().constData(), 0755), -1);
+	QCOMPARE(errno, EROFS);
+	QCOMPARE(unlink(file.toUtf8().constData()), -1);
+	QCOMPARE(errno, EROFS);
+	QCOMPARE(rename(file.toUtf8().constData(), (folder + QStringLiteral("/renamed")).toUtf8().constData()), -1);
+	QCOMPARE(errno, EROFS);
+
+	// Reading still works.
+	QFile outerfile(file);
 	QVERIFY(outerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
 }

@@ -560,6 +560,12 @@ void KIOFuseVFS::setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int 
 		return;
 	}
 
+	if(that->isReadOnly(node))
+	{
+		fuse_reply_err(req, EROFS);
+		return;
+	}
+
 	if((to_set & ~(FUSE_SET_ATTR_SIZE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID
 	              | FUSE_SET_ATTR_MODE
 	              | FUSE_SET_ATTR_MTIME | FUSE_SET_ATTR_MTIME_NOW
@@ -810,6 +816,12 @@ void KIOFuseVFS::mknod(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
+	if(that->isReadOnly(node))
+	{
+		fuse_reply_err(req, EROFS);
+		return;
+	}
+
 	// No type means regular file as well
 	if((mode & S_IFMT) != S_IFREG && (mode & S_IFMT) != 0)
 	{
@@ -854,6 +866,12 @@ void KIOFuseVFS::mkdir(fuse_req_t req, fuse_ino_t parent, const char *name, mode
 		return;
 	}
 
+	if(that->isReadOnly(node))
+	{
+		fuse_reply_err(req, EROFS);
+		return;
+	}
+
 	auto namestr = QString::fromUtf8(name);
 	auto url = addPathElements(that->remoteUrl(node), {namestr});
 	auto *job = KIO::mkdir(url, mode & ~S_IFMT);
@@ -888,6 +906,12 @@ void KIOFuseVFS::unlinkHelper(fuse_req_t req, fuse_ino_t parent, const char *nam
 	if(!parentDirNode)
 	{
 		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	if(that->isReadOnly(parentNode))
+	{
+		fuse_reply_err(req, EROFS);
 		return;
 	}
 
@@ -971,6 +995,12 @@ void KIOFuseVFS::symlink(fuse_req_t req, const char *link, fuse_ino_t parent, co
 		return;
 	}
 
+	if(that->isReadOnly(node))
+	{
+		fuse_reply_err(req, EROFS);
+		return;
+	}
+
 	QString target = QString::fromUtf8(link);
 
 	// Convert an absolute link within the VFS to an absolute link on the origin
@@ -1024,6 +1054,12 @@ void KIOFuseVFS::open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi)
 		return;
 	}
 
+	if(((fi->flags & O_ACCMODE) != O_RDONLY || (fi->flags & O_TRUNC)) && that->isReadOnly(node))
+	{
+		fuse_reply_err(req, EROFS);
+		return;
+	}
+
 	node->m_openCount += 1;
 
 	if (!(fi->flags & O_NOATIME))
@@ -1054,6 +1090,12 @@ void KIOFuseVFS::rename(fuse_req_t req, fuse_ino_t parent, const char *name, fus
 	if(!remoteParent || !remoteNewParent)
 	{
 		fuse_reply_err(req, EINVAL);
+		return;
+	}
+
+	if(that->isReadOnly(parentNode) || that->isReadOnly(newParentNode))
+	{
+		fuse_reply_err(req, EROFS);
 		return;
 	}
 
@@ -1360,6 +1402,12 @@ void KIOFuseVFS::write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t s
 	if(std::dynamic_pointer_cast<KIOFuseDirNode>(node))
 	{
 		fuse_reply_err(req, EISDIR);
+		return;
+	}
+
+	if(that->isReadOnly(node))
+	{
+		fuse_reply_err(req, EROFS);
 		return;
 	}
 
@@ -1810,6 +1858,13 @@ QUrl KIOFuseVFS::remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const
 	return {};
 }
 
+bool KIOFuseVFS::isReadOnly(const std::shared_ptr<const KIOFuseNode> &node) const
+{
+	// Nodes outside of any origin, such as the folders on the way to it, have no protocol.
+	const QUrl url = remoteUrl(node);
+	return url.isValid() && !KProtocolManager::supportsWriting(url);
+}
+
 QString KIOFuseVFS::virtualPath(const std::shared_ptr<KIOFuseNode> &node) const
 {
 	QStringList path;
@@ -1885,7 +1940,10 @@ void KIOFuseVFS::replyAttr(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 	node->m_stat.st_blocks = (node->m_stat.st_size + 512 - 1) / 512;
 
 	// TODO: Validity timeout?
-	fuse_reply_attr(req, &node->m_stat, 0);
+	struct stat attr = node->m_stat;
+	if(reinterpret_cast<KIOFuseVFS*>(fuse_req_userdata(req))->isReadOnly(node))
+		attr.st_mode &= ~(S_IWUSR | S_IWGRP | S_IWOTH);
+	fuse_reply_attr(req, &attr, 0);
 }
 
 void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
@@ -1901,6 +1959,8 @@ void KIOFuseVFS::replyEntry(fuse_req_t req, std::shared_ptr<KIOFuseNode> node)
 		entry.attr_timeout = 0.0;
 		entry.entry_timeout = 0.0;
 		entry.attr = node->m_stat;
+		if(isReadOnly(node))
+			entry.attr.st_mode &= ~(S_IWUSR | S_IWGRP | S_IWOTH);
 	}
 
 	fuse_reply_entry(req, &entry);
