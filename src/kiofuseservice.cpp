@@ -77,6 +77,8 @@ QString KIOFuseService::remoteUrl(const QString& localPath)
 	QString relativePath = mountpoint.relativeFilePath(localPath);
 	// If relativePath is empty or starts with ../, this would get error out
 	QUrl remoteUrl = kiofusevfs.localPathToRemoteUrl(relativePath);
+	if(remoteUrl.isEmpty())
+		remoteUrl = kiofusevfs.localPathToTargetUrl(relativePath);
 
 	if(remoteUrl.isEmpty())
 	{

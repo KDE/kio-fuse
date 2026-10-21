@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <dirent.h>
 
+#include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -744,6 +745,12 @@ void FileOpsTest::testArchiveSurvivesListingItsParent()
 	QCOMPARE(stat(mountedArchive.toUtf8().constData(), &after), 0);
 	QVERIFY(S_ISDIR(after.st_mode));
 	QCOMPARE(after.st_ino, before.st_ino);
+
+	// The remote url of the parent is the real folder, such as file:///tmp, or the archive
+	// worker's url of it, such as tar:/tmp, depending on whether its stat names a target url.
+	const QString parentUrl = m_kiofuse_iface.remoteUrl(QFileInfo(mountedArchive).path()).value();
+	QVERIFY(!parentUrl.isEmpty());
+	QCOMPARE(QUrl(parentUrl).path(), dir.path());
 
 	QFile outerfile(mountedArchive + QStringLiteral("/outerarchive/outerfile"));
 	QVERIFY(outerfile.open(QIODevice::ReadOnly));

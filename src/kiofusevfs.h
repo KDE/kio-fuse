@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include <QEventLoopLocker>
+#include <QHash>
 #include <QObject>
 #include <QSocketNotifier>
 
@@ -54,6 +55,9 @@ public:
 	void mountUrl(const QUrl &url, const std::function<void(const QString&, int)> &callback);
 	/** Converts a local path into a remote URL if it is mounted within the VFS */
 	QUrl localPathToRemoteUrl(const QString &localPath) const;
+	/** Converts a local path in a folder that was skipped as origin into the url that its stat
+	  * named in UDS_TARGET_URL, such as file:///tmp for zip:/tmp. Returns an empty QUrl otherwise. */
+	QUrl localPathToTargetUrl(const QString &localPath) const;
 	/** Returns the path upwards until a root node. */
 	QString virtualPath(const std::shared_ptr<KIOFuseNode> &node) const;
 
@@ -198,6 +202,8 @@ private:
 	std::unordered_map<fuse_ino_t, std::shared_ptr<KIOFuseNode>> m_nodes;
 	/** Set of all nodes with a dirty cache. */
 	std::set<fuse_ino_t> m_dirtyNodes;
+	/** UDS_TARGET_URL of the folders findAndCreateOrigin skipped, by their path in the VFS. */
+	QHash<QString, QUrl> m_targetUrls;
 
 	/** @see setUseFileJob() */
 	bool m_useFileJob;

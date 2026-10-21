@@ -426,6 +426,7 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 		if(!pathElements.isEmpty() && !targetUrl.isEmpty() && targetUrl.scheme() != url.scheme())
 		{
 			qDebug(KIOFUSE_LOG) << url.toDisplayString() << "belongs to" << targetUrl.toDisplayString() << ", not an origin";
+			m_targetUrls.insert(mapUrlToVfs(url).join(QLatin1Char('/')), targetUrl);
 			findAndCreateOrigin(addPathElements(url, pathElements.mid(0, 1)), pathElements.mid(1), callback);
 			return;
 		}
@@ -1837,6 +1838,18 @@ QUrl KIOFuseVFS::localPathToRemoteUrl(const QString& localPath) const
 		auto url = remoteUrl(node);
 		if(!url.isEmpty())
 			return addPathElements(url, pathSegments.mid(i + 1));
+	}
+	return {};
+}
+
+QUrl KIOFuseVFS::localPathToTargetUrl(const QString &localPath) const
+{
+	auto pathSegments = localPath.split(QStringLiteral("/"));
+	for(int i = pathSegments.size(); i > 0; --i)
+	{
+		auto it = m_targetUrls.constFind(pathSegments.mid(0, i).join(QLatin1Char('/')));
+		if(it != m_targetUrls.cend())
+			return addPathElements(*it, pathSegments.mid(i));
 	}
 	return {};
 }
