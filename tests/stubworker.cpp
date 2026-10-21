@@ -21,6 +21,7 @@ public:
 	KIO::WorkerResult stat(const QUrl &url) override;
 	KIO::WorkerResult listDir(const QUrl &url) override;
 	KIO::WorkerResult get(const QUrl &url) override;
+	KIO::WorkerResult del(const QUrl &url, bool isFile) override;
 };
 
 class StubWorkerPluginForMetaData : public QObject
@@ -53,17 +54,21 @@ StubWorker::StubWorker(const QByteArray &protocol,
 
 KIO::WorkerResult StubWorker::stat(const QUrl &url)
 {
-	if(url.host().startsWith(QLatin1String("fail")))
+	// The names that a test creates must not exist yet.
+	if(url.host().startsWith(QLatin1String("fail")) || url.fileName().startsWith(QLatin1String("missing")))
 		return KIO::WorkerResult::fail(KIO::ERR_DOES_NOT_EXIST, url.toString());
 
 	const QString name = (url.path().isEmpty() || url.path() == QLatin1String("/"))
 	                         ? QStringLiteral(".")
 	                         : url.fileName();
 
+	// The entries that listDir gives are files, everything else is a folder.
+	const bool isFile = name.endsWith(QLatin1String(".txt"));
+
 	KIO::UDSEntry entry;
 	entry.fastInsert(KIO::UDSEntry::UDS_NAME, name);
-	entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, S_IFDIR);
-	entry.fastInsert(KIO::UDSEntry::UDS_ACCESS, 0755);
+	entry.fastInsert(KIO::UDSEntry::UDS_FILE_TYPE, isFile ? S_IFREG : S_IFDIR);
+	entry.fastInsert(KIO::UDSEntry::UDS_ACCESS, isFile ? 0644 : 0755);
 	entry.fastInsert(KIO::UDSEntry::UDS_SIZE, 0);
 	statEntry(entry);
 	return KIO::WorkerResult::pass();
@@ -113,6 +118,13 @@ KIO::WorkerResult StubWorker::get(const QUrl &url)
 	Q_UNUSED(url);
 	mimeType(QStringLiteral("text/plain"));
 	data(QByteArray());
+	return KIO::WorkerResult::pass();
+}
+
+KIO::WorkerResult StubWorker::del(const QUrl &url, bool isFile)
+{
+	Q_UNUSED(url);
+	Q_UNUSED(isFile);
 	return KIO::WorkerResult::pass();
 }
 

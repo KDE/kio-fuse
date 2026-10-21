@@ -113,6 +113,12 @@ private:
 	/** Returns the full url upwards until a OriginNode is hit.
 	  * If no OriginNode is found, an empty QUrl is returned. */
 	QUrl remoteUrl(const std::shared_ptr<const KIOFuseNode> &node) const;
+	/** Whether the protocol of the node has the capability that supports checks,
+	  * such as KProtocolManager::supportsDeleting. True outside of any origin. */
+	bool protocolSupports(const std::shared_ptr<const KIOFuseNode> &node, bool (*supports)(const QUrl &)) const;
+	/** Whether the node shows no write permission: a file whose protocol cannot write, such as
+	  * the one of an archive, or a folder whose protocol cannot change its entries either. */
+	bool isReadOnly(const std::shared_ptr<const KIOFuseNode> &node) const;
 
 	/** Fills a (previously zeroed out) struct stat with minimal information about a fake file. */
 	void fillStatForFile(struct stat &attr);

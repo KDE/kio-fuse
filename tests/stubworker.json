@@ -3,6 +3,7 @@
         "stub": {
             "Class": ":internet",
             "Icon": "folder-remote",
+            "deleting": true,
             "input": "none",
             "listing": [
                 "Name",
