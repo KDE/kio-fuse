@@ -418,6 +418,18 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 			return;
 		}
 
+		// A worker can answer for a folder that belongs to another protocol, such as an
+		// archive worker for the real folders on the way to the archive. Such a folder is
+		// listed by the other protocol, which shows the archive as a file, so the origin
+		// is further down.
+		const QUrl targetUrl(statJob->statResult().stringValue(KIO::UDSEntry::UDS_TARGET_URL));
+		if(!pathElements.isEmpty() && !targetUrl.isEmpty() && targetUrl.scheme() != url.scheme())
+		{
+			qDebug(KIOFUSE_LOG) << url.toDisplayString() << "belongs to" << targetUrl.toDisplayString() << ", not an origin";
+			findAndCreateOrigin(addPathElements(url, pathElements.mid(0, 1)), pathElements.mid(1), callback);
+			return;
+		}
+
 		qDebug(KIOFUSE_LOG) << "Origin found at" << url.toDisplayString();
 
 		auto targetPathComponents = mapUrlToVfs(url);
@@ -2230,14 +2242,19 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 		}
 
 		auto childrenNotSeen = std::make_shared<std::vector<fuse_ino_t>>(remoteNode->m_childrenInos);
+		// Whether the listing comes from another protocol, see the entries below.
+		auto redirectedToOtherProtocol = std::make_shared<bool>(false);
 
 		// List the remote dir
 		auto refreshTime = std::chrono::steady_clock::now();
-		auto *job = KIO::listDir(remoteUrl(remoteNode));
+		const QUrl listedUrl = remoteUrl(remoteNode);
+		auto *job = KIO::listDir(listedUrl);
 
 		// smb resolves auth by redirecting host to user@host. Remember the username
 		// so a later session reuses it instead of defaulting wrong and showing infinite auth prompts.
 		connect(job, &KIO::ListJob::redirection, this, [=](KIO::Job *, const QUrl &newUrl) {
+			if(newUrl.scheme() != listedUrl.scheme())
+				*redirectedToOtherProtocol = true;
 			if(newUrl.userName().isEmpty())
 				return;
 			for(KIOFuseNode *cur = remoteNode.get(); cur; cur = nodeForIno(cur->m_parentIno).get())
@@ -2281,6 +2298,12 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 					                    childrenNode->m_stat.st_ino);
 					if(it != end(*childrenNotSeen))
 						childrenNotSeen->erase(it);
+
+					// A listing from another protocol, such as file:/tmp for zip:/tmp, shows an
+					// archive mounted as a folder as a file. The type of a node comes from its
+					// own protocol then.
+					if(*redirectedToOtherProtocol && S_ISDIR(childrenNode->m_stat.st_mode) != entry.isDir())
+						continue;
 
 					// Try to update existing node
 					updateNodeFromUDSEntry(childrenNode, entry);

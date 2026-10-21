@@ -41,6 +41,7 @@ private Q_SLOTS:
 	void testRenameOps();
 	void testDeletionOps();
 	void testArchiveOps();
+	void testArchiveSurvivesListingItsParent();
 	void testManWorkaround();
 	void testKioErrorMapping();
 	void testRootLookup();
@@ -708,6 +709,44 @@ void FileOpsTest::testArchiveOps()
 	QVERIFY(innerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(innerfile.readAll(), QStringLiteral("innercontent").toUtf8());
 	innerfile.close();
+}
+
+void FileOpsTest::testArchiveSurvivesListingItsParent()
+{
+	// The archive worker lists the folder that holds an archive through file:, which shows the
+	// archive as a file. Listing that folder, as "ls .." in the archive does, turned the mounted
+	// archive into a file. See BUG 527506.
+	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("tar")))
+	{
+		// kio-extras is a dependency on the KDE CI, so the test has to run there.
+		if (qEnvironmentVariableIsSet("KDECI_BUILD"))
+			QFAIL("The tar protocol is missing, see README for packages required.");
+		QSKIP("Test requires tar protocol to be supported. See README for packages required.");
+	}
+
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString archivePath = dir.filePath(QStringLiteral("archive.tar.gz"));
+	QVERIFY(QFile::copy(QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz")), archivePath));
+
+	const QString mountedArchive = m_kiofuse_iface.mountUrl(QStringLiteral("tar://%1").arg(archivePath)).value();
+	QVERIFY(!mountedArchive.isEmpty());
+
+	struct stat before = {};
+	QCOMPARE(stat(mountedArchive.toUtf8().constData(), &before), 0);
+	QVERIFY(S_ISDIR(before.st_mode));
+
+	QDir parent(mountedArchive + QStringLiteral("/.."));
+	QVERIFY(parent.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).contains(QStringLiteral("archive.tar.gz")));
+
+	struct stat after = {};
+	QCOMPARE(stat(mountedArchive.toUtf8().constData(), &after), 0);
+	QVERIFY(S_ISDIR(after.st_mode));
+	QCOMPARE(after.st_ino, before.st_ino);
+
+	QFile outerfile(mountedArchive + QStringLiteral("/outerarchive/outerfile"));
+	QVERIFY(outerfile.open(QIODevice::ReadOnly));
+	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
 }
 
 void FileOpsTest::testManWorkaround()
