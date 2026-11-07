@@ -171,6 +171,9 @@ private:
 	
 	/** Creates the scheme dir or mounts the authority. */
 	void attemptAutomount(fuse_req_t req, const std::shared_ptr<KIOFuseDirNode> &parentDirNode, const QString &nodeName);
+	/** Looks up url, the child nodeName of a folder that findAndCreateOrigin skipped. Mounts it
+	  * when it is an archive, and adds it as a skipped folder when it is a real folder. */
+	void lookupInSkippedOrigin(fuse_req_t req, const std::shared_ptr<KIOFuseDirNode> &parentDirNode, const QString &nodeName, const QUrl &url);
 
 	/** Returns the corresponding FUSE error to the given KIO Job error */
 	static int kioErrorToFuseError(const int kioError);
@@ -206,8 +209,14 @@ private:
 	std::unordered_map<fuse_ino_t, std::shared_ptr<KIOFuseNode>> m_nodes;
 	/** Set of all nodes with a dirty cache. */
 	std::set<fuse_ino_t> m_dirtyNodes;
-	/** UDS_TARGET_URL of the folders findAndCreateOrigin skipped, by their path in the VFS. */
-	QHash<QString, QUrl> m_targetUrls;
+	/** A folder that findAndCreateOrigin skipped, because its stat named a url of another
+	  * protocol in UDS_TARGET_URL. */
+	struct SkippedOrigin {
+		QUrl url;
+		QUrl targetUrl;
+	};
+	/** The folders findAndCreateOrigin skipped, by their path in the VFS. */
+	QHash<QString, SkippedOrigin> m_skippedOrigins;
 
 	/** @see setUseFileJob() */
 	bool m_useFileJob;

@@ -426,7 +426,7 @@ void KIOFuseVFS::findAndCreateOrigin(const QUrl &url, const QStringList &pathEle
 		if(!pathElements.isEmpty() && !targetUrl.isEmpty() && targetUrl.scheme() != url.scheme())
 		{
 			qDebug(KIOFUSE_LOG) << url.toDisplayString() << "belongs to" << targetUrl.toDisplayString() << ", not an origin";
-			m_targetUrls.insert(mapUrlToVfs(url).join(QLatin1Char('/')), targetUrl);
+			m_skippedOrigins.insert(mapUrlToVfs(url).join(QLatin1Char('/')), {url, targetUrl});
 			findAndCreateOrigin(addPathElements(url, pathElements.mid(0, 1)), pathElements.mid(1), callback);
 			return;
 		}
@@ -1733,6 +1733,15 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	auto remoteDirNode = std::dynamic_pointer_cast<KIOFuseRemoteDirNode>(parentDirNode);
 	if(!remoteDirNode)
 	{
+		// A skipped folder lists only what is mounted in it, such as one archive, but its
+		// other archives can be entered too, as "cd ../other.zip" does.
+		const auto skipped = that->m_skippedOrigins.constFind(that->virtualPath(parentDirNode).mid(1));
+		if(skipped != that->m_skippedOrigins.cend())
+		{
+			that->lookupInSkippedOrigin(req, parentDirNode, nodeName, addPathElements(skipped->url, {nodeName}));
+			return;
+		}
+
 		that->attemptAutomount(req, parentDirNode, nodeName);
 		return;
 	}
@@ -1743,6 +1752,46 @@ void KIOFuseVFS::lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 			fuse_reply_err(req, error);
 		else
 			that->replyEntry(req, node);
+	});
+}
+
+void KIOFuseVFS::lookupInSkippedOrigin(fuse_req_t req, const std::shared_ptr<KIOFuseDirNode> &parentDirNode, const QString &nodeName, const QUrl &url)
+{
+	auto statJob = KIO::stat(url);
+	statJob->setSide(KIO::StatJob::SourceSide);
+	connect(statJob, &KIO::StatJob::result, this, [=] {
+		// The archive workers cannot stat a file that is not an archive.
+		if(statJob->error())
+		{
+			fuse_reply_err(req, ENOENT);
+			return;
+		}
+
+		const QUrl targetUrl(statJob->statResult().stringValue(KIO::UDSEntry::UDS_TARGET_URL));
+		if(targetUrl.isEmpty() || targetUrl.scheme() == url.scheme())
+		{
+			mountUrl(url, [=](const QString &, int error) {
+				auto child = nodeByName(parentDirNode, nodeName);
+				if(error || !child)
+					fuse_reply_err(req, error ? error : ENOENT);
+				else
+					replyEntry(req, child);
+			});
+			return;
+		}
+
+		// A real folder, which holds archives as its parent does
+		auto child = nodeByName(parentDirNode, nodeName);
+		if(!child)
+		{
+			struct stat attr = {};
+			fillStatForFile(attr);
+			attr.st_mode = S_IFDIR | 0755;
+			child = std::make_shared<KIOFuseDirNode>(parentDirNode->m_stat.st_ino, nodeName, attr);
+			insertNode(child);
+		}
+		m_skippedOrigins.insert(mapUrlToVfs(url).join(QLatin1Char('/')), {url, targetUrl});
+		replyEntry(req, child);
 	});
 }
 
@@ -1848,9 +1897,9 @@ QUrl KIOFuseVFS::localPathToTargetUrl(const QString &localPath) const
 	auto pathSegments = localPath.split(QStringLiteral("/"));
 	for(int i = pathSegments.size(); i > 0; --i)
 	{
-		auto it = m_targetUrls.constFind(pathSegments.mid(0, i).join(QLatin1Char('/')));
-		if(it != m_targetUrls.cend())
-			return addPathElements(*it, pathSegments.mid(i));
+		auto it = m_skippedOrigins.constFind(pathSegments.mid(0, i).join(QLatin1Char('/')));
+		if(it != m_skippedOrigins.cend())
+			return addPathElements(it->targetUrl, pathSegments.mid(i));
 	}
 	return {};
 }

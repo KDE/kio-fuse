@@ -43,6 +43,7 @@ private Q_SLOTS:
 	void testDeletionOps();
 	void testArchiveOps();
 	void testArchiveSurvivesListingItsParent();
+	void testArchiveSiblingCanBeEntered();
 	void testArchiveIsReadOnly();
 	void testDeleteOnlyProtocol();
 	void testManWorkaround();
@@ -756,6 +757,48 @@ void FileOpsTest::testArchiveSurvivesListingItsParent()
 	QFile outerfile(mountedArchive + QStringLiteral("/outerarchive/outerfile"));
 	QVERIFY(outerfile.open(QIODevice::ReadOnly));
 	QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
+}
+
+void FileOpsTest::testArchiveSiblingCanBeEntered()
+{
+	// From inside a mounted archive, "ls .. && cd ../other.tar.gz" enters the other archive,
+	// also in a subfolder. The listing of ".." came from file:, which shows the other archive
+	// as a file, or, with a stat that names the target url, lists only the mounted archive.
+	if (!KProtocolInfo::isKnownProtocol(QStringLiteral("tar")))
+	{
+		// kio-extras is a dependency on the KDE CI, so the test has to run there.
+		if (qEnvironmentVariableIsSet("KDECI_BUILD"))
+			QFAIL("The tar protocol is missing, see README for packages required.");
+		QSKIP("Test requires tar protocol to be supported. See README for packages required.");
+	}
+
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	const QString archive = QFINDTESTDATA(QStringLiteral("data/outerarchive.tar.gz"));
+	QVERIFY(QFile::copy(archive, dir.filePath(QStringLiteral("archive.tar.gz"))));
+	QVERIFY(QFile::copy(archive, dir.filePath(QStringLiteral("other.tar.gz"))));
+	QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("sub")));
+	QVERIFY(QFile::copy(archive, dir.filePath(QStringLiteral("sub/third.tar.gz"))));
+
+	const QString mountedArchive = m_kiofuse_iface.mountUrl(QStringLiteral("tar://%1").arg(dir.filePath(QStringLiteral("archive.tar.gz")))).value();
+	QVERIFY(!mountedArchive.isEmpty());
+	const QString parent = QFileInfo(mountedArchive).path();
+	QDir(parent).entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
+
+	for(const QString &name : {QStringLiteral("other.tar.gz"), QStringLiteral("sub/third.tar.gz")})
+	{
+		struct stat attr = {};
+		QCOMPARE(stat((parent + QLatin1Char('/') + name).toUtf8().constData(), &attr), 0);
+		QVERIFY(S_ISDIR(attr.st_mode));
+
+		QFile outerfile(parent + QLatin1Char('/') + name + QStringLiteral("/outerarchive/outerfile"));
+		QVERIFY(outerfile.open(QIODevice::ReadOnly));
+		QCOMPARE(outerfile.readAll(), QStringLiteral("outercontent").toUtf8());
+	}
+
+	struct stat attr = {};
+	QCOMPARE(stat((parent + QStringLiteral("/missing.tar.gz")).toUtf8().constData(), &attr), -1);
+	QCOMPARE(errno, ENOENT);
 }
 
 void FileOpsTest::testArchiveIsReadOnly()
