@@ -2451,6 +2451,11 @@ void KIOFuseVFS::awaitChildrenComplete(const std::shared_ptr<KIOFuseDirNode> &no
 					continue;
 				}
 
+				// The other protocol shows an archive as a file, so the next lookup asks the
+				// protocol of the node, which shows it as a folder.
+				if(*redirectedToOtherProtocol && !entry.isDir())
+					std::dynamic_pointer_cast<KIOFuseRemoteNodeInfo>(childrenNode)->m_lastStatRefresh = {};
+
 				insertNode(childrenNode);
 			}
 		});
